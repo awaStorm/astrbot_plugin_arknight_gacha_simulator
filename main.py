@@ -337,7 +337,11 @@ class ArknightsGacha(Star):
             self.renderer = None
 
     def _start_updater(self):
-        """启动自动更新器"""
+        """启动自动更新器（受 auto_update 配置控制，默认开启）"""
+        auto_update = bool(self.config.get("auto_update", True)) if self.config else True
+        if not auto_update:
+            logger.info("[ArkGacha] auto_update 已关闭，跳过自动更新器")
+            return
         try:
             from auto_updater import AutoUpdater
 

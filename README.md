@@ -96,8 +96,8 @@ git clone https://github.com/awaStorm/astrbot_plugin_arknight_gacha_simulator.gi
 
 | 配置项 | 类型 | 默认值 | 说明 |
 |--------|------|--------|------|
-| `data_path` | string | `""` | `cleaned_pools_final.json` 的自定义路径。留空则使用插件内置数据目录 |
-| `auto_update` | bool | `false` | 启动时是否自动从 PRTS Wiki 更新卡池数据 |
+| `data_path` | string | `""` | `cleaned_pools_final.json` 的自定义路径。留空则使用插件自动生成的 `data/processed/` 目录 |
+| `auto_update` | bool | `true` | 启动时是否自动从 GitHub / PRTS 更新卡池数据。**默认开启**：首次运行会拉取数据初始化 |
 | `sign_in_amount` | int | `10` | 每日签到赠送的抽卡次数 |
 
 ---
@@ -136,7 +136,7 @@ astrbot_plugin_arknight_gacha_simulator/
 
 ## 数据更新机制
 
-插件默认内置处理好的卡池数据。若启用 `auto_update`，启动时将自动执行更新流程：
+插件**不内置任何卡池数据**（`data/` 目录全部由脚本在运行时生成）。启用 `auto_update`（默认开启）时，启动将自动执行数据拉取与更新流程：
 
 1. **GitHub 对比**：通过 SHA256 对比官方 `gacha_table.json` 是否更新。
 2. **PRTS 降级对比**：抓取 PRTS 卡池一览 wikitext，与本地数据对比池名与时间区间。

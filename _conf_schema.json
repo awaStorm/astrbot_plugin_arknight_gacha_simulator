@@ -7,9 +7,9 @@
   },
   "auto_update": {
     "type": "bool",
-    "description": "启动时是否自动从 PRTS Wiki 更新卡池数据",
-    "default": false,
-    "hint": "设为 true 则每次启动时执行 tools/fetch_gacha_wikitext.py"
+    "description": "启动时是否自动从 GitHub / PRTS 更新卡池数据(首次运行会拉取数据初始化)",
+    "default": true,
+    "hint": "默认开启。首次运行会自动拉取 gacha_table.json 并生成卡池数据"
   },
   "sign_in_amount": {
     "type": "int",

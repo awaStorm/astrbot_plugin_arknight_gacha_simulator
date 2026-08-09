@@ -595,10 +595,13 @@ class ArknightsGacha(Star):
         # 格式化输出
         star_label = star_mark(result["rarity"])
         up_tag = " [UP]" if result["is_up"] else ""
+        # 该池累计抽数（已含本次）
+        pool_pulls = self.db.get_pool_pull_count(user_id, pool["active_id"])
 
         text = (
             f"[单抽结果] 池{pool_num}「{pool['pool_name']}」\n"
-            f"{result['rarity']}★ {result['name']} {star_label}{up_tag}"
+            f"{result['rarity']}★ {result['name']} {star_label}{up_tag}\n"
+            f"本池累计抽数: {pool_pulls}"
         )
 
         # 尝试生成图片
@@ -692,6 +695,10 @@ class ArknightsGacha(Star):
 
         remaining = self.db.get_draw_count(user_id)
         lines.append(f"  剩余次数: {remaining}")
+
+        # 该池累计抽数（已含本次十连）
+        pool_pulls = self.db.get_pool_pull_count(user_id, pool["active_id"])
+        lines.append(f"  本池累计抽数: {pool_pulls}")
 
         # 尝试生成图片
         image_path = None

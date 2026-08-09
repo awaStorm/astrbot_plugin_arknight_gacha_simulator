@@ -391,3 +391,11 @@ class DBManager:
                 (user_id, pool_id, seen, now),
             )
             conn.commit()
+
+    def get_pool_pull_count(self, user_id: str, pool_id: int) -> int:
+        """
+        获取指定用户在该卡池的累计抽数。
+        记录不存在时自动创建并返回 0。
+        """
+        rec = self._ensure_first_pull_record(user_id, pool_id)
+        return rec["pull_count"]

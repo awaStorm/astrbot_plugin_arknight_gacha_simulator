@@ -235,17 +235,25 @@ class ArknightsGacha(Star):
     # ──────────────────── 初始化子步骤 ────────────────────
 
     def _load_pool_data(self):
-        """加载 cleaned_pools_final.json"""
+        """加载 cleaned_pools_final.json
+
+        首次运行/数据缺失时**不抛异常**：卡池数据由自动更新器（AutoUpdater）首次启动时
+        从 GitHub / PRTS 拉取并通过全量流水线生成。这里先置空并记录提示，
+        待 updater 生成数据后通过 on_after_update 回调重新加载。
+        """
         candidates = [
             os.path.join(PLUGIN_DIR, "data", "processed"),
         ]
         path = _find_file("cleaned_pools_final.json", candidates)
         if not path:
-            raise FileNotFoundError(
-                "未找到 cleaned_pools_final.json。请先运行: python pool_generator.py"
+            logger.info(
+                "[ArkGacha] 未找到 cleaned_pools_final.json，等待自动更新器首次拉取生成卡池数据"
             )
+            self.pools = []
+            return
         with open(path, "r", encoding="utf-8") as f:
             self.pools = json.load(f)
+        logger.info(f"[ArkGacha] 已加载 {len(self.pools)} 个卡池")
         logger.info(f"[ArkGacha] 已加载 {len(self.pools)} 个卡池数据")
 
     def _load_active_pools(self):

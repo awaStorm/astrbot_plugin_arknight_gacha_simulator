@@ -14,7 +14,7 @@ desc: |
   - 自动数据更新：数据通过 tools/ 目录下脚本从 PRTS Wiki 与官方 gacha_table.json 自动同步
 
   抽卡次数、签到记录、潜能仓库数据均持久化于独立 SQLite 数据库，多用户数据隔离。
-version: v0.2.0
+version: v0.2.1
 author: awaStorm
 repo: https://github.com/awaStorm/astrbot_plugin_arknight_gacha_simulator
 astrbot_version: ">=4.16"

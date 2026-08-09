@@ -448,9 +448,26 @@ class ArknightsGacha(Star):
         return None
 
     def _check_loaded(self) -> Optional[str]:
-        """返回错误信息或 None"""
+        """返回错误信息或 None
+
+        时序修复: 首次初始化时 auto_updater 是异步生成数据的，
+        命令可能先于数据生成而触发。因此在检查前先尝试从磁盘刷新
+        active_pools 与抽卡引擎，避免出现"卡池查询为空"。
+        """
         if not self._loaded:
             return "插件数据未加载，请稍后再试。"
+
+        if not self.active_pools:
+            try:
+                self._load_active_pools()
+            except Exception as e:
+                logger.warning(f"[ArkGacha] 刷新 active_pools 失败: {e}")
+        if not self.engine:
+            try:
+                self._init_engine()
+            except Exception as e:
+                logger.warning(f"[ArkGacha] 刷新抽卡引擎失败: {e}")
+
         if not self.active_pools:
             return "当前没有进行中的卡池，无法抽卡。"
         if not self.engine:

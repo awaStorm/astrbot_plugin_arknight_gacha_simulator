@@ -1,0 +1,9 @@
+# AstrBot Plugin: Arknight Gacha Simulator
+# 网络请求 (必须)
+aiohttp>=3.9.0
+
+# 数据获取工具 (PRTS Wiki / Cargo API 抓取，用于自动更新)
+curl_cffi>=0.7.0
+
+# 图片合成 (抽卡结果图片渲染)
+Pillow>=10.0.0

@@ -1,0 +1,20 @@
+{
+  "data_path": {
+    "type": "string",
+    "description": "cleaned_pools_final.json 的路径。留空则使用插件内置的 data/processed/ 目录",
+    "default": "",
+    "hint": "一般无需填写，插件会自动使用内置数据"
+  },
+  "auto_update": {
+    "type": "bool",
+    "description": "启动时是否自动从 PRTS Wiki 更新卡池数据",
+    "default": false,
+    "hint": "设为 true 则每次启动时执行 tools/fetch_gacha_wikitext.py"
+  },
+  "sign_in_amount": {
+    "type": "int",
+    "description": "每日签到赠送的抽卡次数",
+    "default": 10,
+    "hint": "每日 /抽卡签到 可领取的抽卡机会次数"
+  }
+}

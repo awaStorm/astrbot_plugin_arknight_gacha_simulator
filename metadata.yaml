@@ -2,6 +2,7 @@ name: astrbot_plugin_arknight_gacha_simulator
 display_name: Arknight Gacha Simulator
 short_desc: 明日方舟抽卡模拟器 - 卡池查询、抽卡模拟、签到系统、潜能仓库
 desc: |
+  tip: 首次运行插件在完全加载之后需要再热重载刷新插件数据以正常使用
   忠实还原明日方舟抽卡机制的 AstrBot 抽卡模拟器插件。
 
   功能：

@@ -33,7 +33,9 @@ CARD_DIR = STATE_DIR               # 卡牌底框 (back_low_* / back_four / back
 TEXTURE_DIR = STATE_DIR            # 网点 / 纹理 / 光效贴图 (dianzhen / guangxiao 等)
 STAR_DIR = STATE_DIR               # 星级标 (star_1 ~ star_6)
 PROF_DIR = os.path.join(CACHE_DIR, "professions")   # 职业图标 (动态下载缓存)
+PROFESSION_LABELED_DIR = os.path.join(CACHE_DIR, "professions_labeled")  # 带文字职业图标 (单抽用)
 PORTRAIT_DIR = os.path.join(CACHE_DIR, "portraits") # 角色半身像 / 立绘 (动态下载缓存)
+ELITE1_ART_DIR = os.path.join(CACHE_DIR, "elite1_art")  # 单抽用干员精一立绘 (动态下载缓存, 降质存储)
 RAW_DIR = os.path.join(PLUGIN_DIR, "data", "raw")   # 数据文件 (characters_raw.json 用于职业映射)
 
 
@@ -300,6 +302,38 @@ DEBUG_SHOW_BOUNDS = {
 
 
 # =============================================================================
+#  7. 单抽图参数（插件扩展，Generator_test 无此功能）
+#     单抽与十连共用同一套图层顺序与光效布局，只是把单张卡居中放大；
+#     合成时按下面的比例算出统一缩放倍率 zoom，光效尺寸/偏移/裁剪框同步放大，
+#     保证单抽卡面构图与十连中的同一张卡完全一致。
+# =============================================================================
+# 放大后的卡片高度（宽度按比例）占画布高度的比例：0.92 = 卡片高度约占画布 92%
+SINGLE_PULL_CARD_FILL = 0.92
+
+
+# =============================================================================
+#  8. 单抽·干员立绘缓存参数（插件扩展）
+#     立绘统一取精英1立绘(立绘_<干员名>_1.png)，使各星级风格一致；
+#     极少数缺精一立绘的干员才兜底精英2立绘(立绘_<干员名>_2.png)。
+#     立绘的构图/位置/大小已迁到第 9 节 SP3_ELEMENTS["portrait"]，此处只管缓存。
+# =============================================================================
+# 立绘缓存画质档位。由 AstrBot 插件配置页的 portrait_cache_quality 选择，
+# 未配置 / 非法值时回退到 DEFAULT_PORTRAIT_QUALITY。
+#   max_height: 0 = 不降采样（原画质）
+#   format    : "PNG"（无损）/ "WEBP"（有损，体积小）
+#   quality   : 仅 WEBP 生效，取 1~100
+# 每个档位在 elite1_art/ 下独占一个子目录，因此切换档位会自动重新缓存，
+# 不会与其它档位的缓存互相覆盖（旧档位目录可手动删除以释放空间）。
+PORTRAIT_QUALITY_PRESETS = {
+    "original": {"max_height": 0,    "format": "PNG",  "quality": 100},
+    "high":     {"max_height": 1080, "format": "WEBP", "quality": 95},
+    "medium":   {"max_height": 810,  "format": "WEBP", "quality": 88},
+    "low":      {"max_height": 640,  "format": "WEBP", "quality": 78},
+}
+DEFAULT_PORTRAIT_QUALITY = "original"
+
+
+# =============================================================================
 #  素材文件名映射 (Material File Mapping)
 #     把逻辑用途映射到插件实际目录下的文件名。
 # =============================================================================
@@ -335,4 +369,276 @@ LIGHT_FILES = {
     "star_6_dots": "dianzhen_01.png",        # 6★ 点阵 (网点纹理, 被卡片框住)
     "star_6_dots_back": "dianzhen_01.png",   # 6★ 底层点阵 (不被卡片框住,垫底)
     "star_light": "star_light.png",          # 光柱上方的星点光效 (128x128)
+}
+
+
+# =============================================================================
+#  9. 单抽结果图 · 元素表（插件扩展）
+#     本配置块是单抽合成器的唯一调参入口：改这里的数值即可调整构图，无需改代码。
+#
+#  通用字段（所有元素）：
+#    pos       相对【画布中心】的偏移 (x, y)；(0, 0) = 正中心
+#              目前全部默认堆在中心，请按需调开。
+#    size      等比缩放百分比：100 = 素材原始尺寸，50 = 缩小一半，200 = 放大一倍；
+#              None 等价于 100；也可传 (w_pct, h_pct) 分别控制宽高（非等比，少用）
+#    opacity   不透明度 0.0 ~ 1.0
+#    blend     混合模式：NORMAL / SCREEN / MULTIPLY / OVERLAY
+#    layer     层级：数值【越小越靠上层】（后绘制，会遮挡下层）
+#              注意这与常见直觉相反，调整时请留意。
+#    enabled   是否绘制该元素
+#
+#  文字元素额外字段：
+#    text              取值来源："cn"（中文名）/ "en"（英文名）
+#    font_size         字号（像素）
+#    font              指定字体文件名（留空 = 按语言自动选：
+#                      中文→思源黑体 Heavy，英文→Oxanium SemiBold）
+#    weight            可变字体字重（Oxanium 用 600；思源黑体为静态 Heavy，忽略）
+#    fill              填充色
+#    stroke_fill       描边色（当前默认灰色）
+#    stroke_width      描边宽度，单位【像素】（纯外描边，不外侵字芯）；
+#                      0 = 不描边。填 1 即为 1px 描边，与实际厚度一致
+#    uppercase         True = 文字转全大写（英文名常用）
+#    letter_spacing    字距比例（相对字号）
+#    align             相对 pos 的水平对齐：left / center / right
+#    color_mode        True = 忽略描边，直接以 fill 绘制彩色文字
+#
+#  星级元素（stars）额外字段：
+#    size              单颗星的等比缩放百分比（同其它元素，100 = 素材原始尺寸）
+#    gap               相邻两颗星之间的像素间距（绝对像素，非百分比）
+#    align             整组相对 pos 的水平对齐
+#    count_from_rarity True = 数量取干员星级；False = 使用 fixed_count
+#    fixed_count       count_from_rarity 为 False 时的固定数量
+# =============================================================================
+SP3_CANVAS = (CANVAS_WIDTH, CANVAS_HEIGHT)
+
+# 单抽专用背景：十连背景的局部放大版（与十连并非同一张图，已缩放到 1024x576）。
+# 该文件缺失时，可把下面 background 元素的 file 改回 BACKGROUND_FILE 兜底。
+SP3_BACKGROUND_FILE = "gacha_beijing_composed_single.png"
+
+SP3_ELEMENTS = {
+    # ──────────────────────── 背景（单抽专用）────────────────────────
+    "background": {
+        "file": SP3_BACKGROUND_FILE, "layer": 100, "pos": (0, 0), "size": 100,
+        "opacity": 1.0, "blend": "NORMAL", "enabled": True,
+    },
+
+    # ──────────────────────── 干员精一立绘 ────────────────────────
+    "portrait": {
+        "layer": 40, "pos": (130, 85),
+        "fill": 1.0,           # 立绘高度占画布高度的比例
+        "size_percent": 120,   # 再乘一个百分比：100 = 不缩放，>100 = 放大
+        "enabled": True,
+    },
+
+    # ──────────────────────── 阵营 logo ────────────────────────
+    "camp_logo": {
+        "layer": 41, "pos": (-112, -50), "size": 66,
+        "opacity": 1.0, "blend": "NORMAL", "enabled": True,
+    },
+
+    # ──────────────────────── 带文字职业图标 ────────────────────────
+    "profession": {
+        "layer": 24, "pos": (-70, 143), "size": 83,
+        "opacity": 1.0, "blend": "NORMAL", "enabled": True,
+    },
+
+    # ──────────── 装饰素材（固定画上，不随星级变化，也非星级用途）────────────
+    # ↓ 以下 4 个装饰元素均启用【随机副本】：
+    #   random_count > 0 时忽略固定 pos，在 random_area 范围内随机生成 N 个（允许重叠）。
+    #   random_area 坐标同样相对画布中心：x 取 ±512 = 画布全宽；y 取 >-250 = 画面中上部起。
+    "deco_star04": {
+        "file": "star_04.png", "layer": 51, "pos": (250, 250), "size": 100,
+        "opacity": 1.0, "blend": "NORMAL", "enabled": True,
+        "random_count": 3,
+        "random_area": {"x": (-512, 512), "y": (-100, 280)},
+        # 每个副本各自的【随机尺寸范围】（百分比，100 = 素材原始大小）
+        "random_size": (60, 80),
+        # 以下两项仅对【翻转后】的副本生效（需先配 rotate_chance）：
+        "rotated_offset": (0, 0),         # 相对原随机位置的额外偏移（调 y 就是调高度）
+        "rotated_tint": (235, 150, 105),  # 染成暖橙色（None = 不染色）
+        # 附属拖尾：程序绘制的柔和光柱，每个实例 50% 概率出现
+        "trail": {
+            "type": "beam",             # "beam" = 程序绘制光柱 / "image" = 用 file 素材
+            "chance": 0.3,              # 出现概率
+            "layer_offset": 0.5,        # 层级 = 所属 star 层 + 该值。
+                                        # 【必须用小数】：+0.5 = 紧贴自身 star 的下一层
+                                        # （负数会让光柱盖住 star；整数会撞到相邻 star 的层）
+            "size_ratio": 1.0,          # 基准尺寸 = star 尺寸 × 该比例
+            # 尺寸二选一：填 *_px 用【绝对像素】；不填则用倍率 × star 尺寸。
+            # 倍率是【相对 star 的倍数】：0.35 ≈ 45px；填 20 = 2560px（画布才 1024），
+            # 柱形会被截平成一整片平光，所以想精确控制请直接用 beam_width_px。
+            "beam_width": 0.3,         # 光柱宽 = star 宽 × 该值（0.1~1.5 较合理）
+            "beam_height": 1.8,         # 光柱高 = star 高 × 该值
+            # 平顶比例：中心这一段保持【全亮】，只有外侧羽化。
+            # 想要参考图那种"粗条状光柱"就调大它 —— 光靠 beam_width 加宽
+            # 只会把半透明的雾气摊得更开，看着仍然像一条细线。
+            "flat_ratio": 0.7,          # 0 = 纯锥形（细） / 0.5 = 中心一半是实的（粗条）
+            "softness_x": 1.2,          # 横向边缘衰减：有平顶后只影响外侧（越大越柔）
+            "softness_y": 1.0,          # 纵向衰减
+            "color": (255, 255, 255),   # 光柱颜色（未翻转的 star 用这个）
+            "rotated_color": None,      # 所属 star 翻转时的光柱颜色；None = 跟随 rotated_tint
+            "opacity": 0.8,             # 整体淡度（要"淡"就调小）
+            "blend": "SCREEN",          # 光柱推荐用 SCREEN 叠加
+            "follow_rotate": True,      # 是否跟随所属 star 一起翻转
+            "offset": (0, 0),           # 相对所属 star 的偏移
+        },
+    },
+    "deco_star24": {
+        "file": "star_24.png", "layer": 72, "pos": (200, -200), "size": 100,
+        "opacity": 1.0, "blend": "NORMAL", "enabled": True,
+        "random_count": 3,
+        "random_area": {"x": (-512, 512), "y": (-100, 280)},
+        "random_size": (60, 80),
+        "rotated_offset": (0, 0), "rotated_tint": (235, 150, 105),
+        "trail": {
+            "type": "beam", "chance": 0.3, "layer_offset": 0.5,
+            "size_ratio": 1.0, "beam_width": 0.2, "beam_height": 1.8,
+            "flat_ratio": 0.7,
+            "softness_x": 1.2, "softness_y": 1.0, "color": (255, 255, 255),
+            "rotated_color": None,      # 翻转时改用的光柱颜色；None = 跟随 rotated_tint
+            "opacity": 0.8, "blend": "SCREEN", "follow_rotate": True,
+            "offset": (0, 0),
+        },
+    },
+    "deco_star25": {
+        "file": "star_25.png", "layer": 53, "pos": (-200, 200), "size": 100,
+        "opacity": 1.0, "blend": "NORMAL", "enabled": True,
+        "random_count": 3,
+        "random_area": {"x": (-512, 512), "y": (-100, 280)},
+        "random_size": (60, 80),
+        "rotated_offset": (0, 0), "rotated_tint": (235, 150, 105),
+        "trail": {
+            "type": "beam", "chance": 0.3, "layer_offset": 0.5,
+            "size_ratio": 1.0, "beam_width": 0.2, "beam_height": 1.8,
+            "flat_ratio": 0.7,
+            "softness_x": 1.2, "softness_y": 1.0, "color": (255, 255, 255),
+            "rotated_color": None,      # 翻转时改用的光柱颜色；None = 跟随 rotated_tint
+            "opacity": 0.8, "blend": "SCREEN", "follow_rotate": True,
+            "offset": (0, 0),
+        },
+    },
+    "deco_star26": {
+        "file": "star_26.png", "layer": 54, "pos": (-200, -200), "size": 100,
+        "opacity": 1.0, "blend": "NORMAL", "enabled": True,
+        "random_count": 8,
+        "random_area": {"x": (-512, 512), "y": (-100, 280)},
+        "random_size": (60, 80),
+        # 90% 概率翻转 180°，翻转后的实例改用 rotated_layer
+        "rotate_chance": 0.7,
+        "rotated_layer": 61,
+        "rotated_offset": (0, -20),         # 翻转后的实例额外偏移（调 y 即调高度）
+        "rotated_tint": (235, 150, 105),  # 翻转后染成暖橙色
+        "trail": {
+            "type": "beam", "chance": 0.3, "layer_offset": 0.5,
+            "size_ratio": 1.0, "beam_width": 0.3, "beam_height": 1.8,
+            "flat_ratio": 0.7,
+            "softness_x": 1.2, "softness_y": 1.0, "color": (255, 255, 255),
+            "rotated_color": None,      # 翻转时改用的光柱颜色；None = 跟随 rotated_tint
+            "opacity": 0.8, "blend": "SCREEN", "follow_rotate": True,
+            "offset": (0, 0),
+        },
+    },
+    # 放射状星形装饰底纹（512x512）。默认层值比名字大 => 垫在名字下方，
+    # 若你想让它盖住名字，把 layer 调到比 name_cn(10)/name_en(11) 更小即可。
+    "deco_beijing05": {
+        "file": "beijing_05.png", "layer": 90, "pos": (66, -20), "size": 155,
+        "opacity": 1.0, "blend": "NORMAL", "enabled": True,
+    },
+
+    # ──────────── SKIP 跳过按钮（结算图右下角常见）────────────
+    "btn_skip": {
+        "file": "btn_skip.png", "layer": 1, "pos": (450, -240), "size": 80,
+        "opacity": 1.0, "blend": "NORMAL", "enabled": True,
+        # 界面元素：在打光【之后】绘制，保证不被画面暗角压暗（保持纯亮）
+        "above_vignette": True,
+        # 程序生成的底板（素材 btn_skip.png 只有白色文字+三角，没有底）
+        "backdrop": {
+            "enabled": True,
+            "color": (28, 30, 34, 210),   # 灰黑底（alpha 控制虚实）
+            "size": (75, 55),            # 底板宽高（像素）
+            "radius": 0,                  # 圆角半径，0 = 直角
+            "offset": (0, 0),             # 相对按钮中心的偏移
+        },
+    },
+
+    # ──────────── 星级五角星（数量 = 干员星级）────────────
+    "stars": {
+        "file": "wujiaoxing_01.png", "layer": 19, "pos": (-147, 72),
+        "size": 47,                # 单颗等比缩放百分比（100 = 素材原始 256x256）
+        "gap": -51,                   # 相邻两颗的像素间距
+        "align": "left",            # 整组水平对齐：left / center / right
+        "count_from_rarity": True,  # True = 数量取星级
+        "fixed_count": 6,           # count_from_rarity=False 时使用
+        "opacity": 1.0, "blend": "NORMAL", "enabled": True,
+    },
+
+    # ──────────── NEW 标记（预留：首次抽到才显示）────────────
+    # 注意：enabled 必须保持 True，否则元素不会进入绘制管线，
+    #       is_new=True 也无法显示。真正是否绘制由 render_single_pull(is_new=...)
+    #       决定；默认 is_new=False，即不显示。
+    "new_tag": {
+        "file": "sprite_new.png", "layer": 23, "pos": (-40, 185), "size": 80,
+        "opacity": 1.0, "blend": "NORMAL", "enabled": True,
+    },
+
+    # ──────────────────────── 干员中文名 ────────────────────────
+    "name_cn": {
+        "layer": 21, "pos": (8, 143), "opacity": 1.0, "blend": "NORMAL",
+        "enabled": True,
+        "text": "cn", "font_size": 59, "font": "HarmonyOS_Sans_SC_Bold.ttf",
+        "weight": 900,
+        # 描边用【半透明黑】：亮背景上叠出灰色轮廓（实测≈165，与原版一致），
+        # 暗背景上几乎不可见，实现自适应分离。alpha 越大描边越明显。
+        "fill": (255, 255, 255, 255), "stroke_fill": (0, 0, 0, 80),
+        "stroke_width": 1, "letter_spacing": 0.0,
+        "align": "left", "color_mode": False,
+    },
+
+    # ──────────────────────── 干员英文名 ────────────────────────
+    "name_en": {
+        "layer": 22, "pos": (8, 186), "opacity": 1.0, "blend": "NORMAL",
+        "enabled": True,
+        "text": "en", "font_size": 25, "font": "HarmonyOS_Sans_SC_Bold.ttf",
+        "weight": 600,
+        # 描边同为半透明黑（与原版一致）：亮背景显灰、暗背景近乎消失
+        "fill": (255, 255, 255, 255), "stroke_fill": (0, 0, 0, 80),
+        "stroke_width": 1, "letter_spacing": 0.02, "uppercase": True,
+        "align": "left", "color_mode": False,
+    },
+}
+
+# -----------------------------------------------------------------------------
+#  单抽·打光（椭圆暗角）
+#    效果：画面四周偏暗、中心展示人物等主题的区域保持正常亮度。
+#    椭圆内部不压暗，向外按羽化曲线渐变到最暗。
+# -----------------------------------------------------------------------------
+SP3_VIGNETTE = {
+    "enabled": True,
+    "layer": 11,              # 置于最上层（比所有元素都小）
+    "center": (0, 0),        # 椭圆中心相对画布中心的偏移
+    "size": (1100, 600),      # 椭圆直径 (宽, 高)
+    "feather": 0.35,         # 羽化程度：0 = 硬边，越大过渡越柔和
+    "darkness": 0.7,        # 最暗处的不透明度（0 ~ 1，越大四周越黑）
+    "color": (0, 0, 0),      # 暗角颜色
+    "invert": False,         # True = 反转（中心变暗、四周亮）
+    "power": 2,            # 渐变曲线指数：>1 更集中，<1 更平缓
+}
+
+# -----------------------------------------------------------------------------
+#  单抽·底部渐变遮罩（三段式，自下而上）
+#    [ solid_height ] 纯色段：完全不透明（alpha = max_alpha）
+#    [ fade_height  ] 渐变段：alpha 由 max_alpha 渐隐到 0
+#    [     其余     ] 全透明
+#    总覆盖高度 = solid_height + fade_height，两段各自独立可控。
+#    是独立配置块，通过 layer 参与统一排序，语义与元素表一致。
+# -----------------------------------------------------------------------------
+SP3_BOTTOM_FADE = {
+    "enabled": True,
+    "layer": 12,              # 越小越靠上层；2 = 仅低于打光(1)，盖在其余元素之上
+    "color": (0, 0, 0),      # 渐变色
+    "max_alpha": 255,        # 纯色段的不透明度（255 = 完全不透明纯黑）
+    "solid_height": 40,      # ① 底部【纯色】段高度（像素）：此段不渐变，恒为纯黑
+    "fade_height": 60,      # ② 纯色段之上的【渐变】段高度（像素）：alpha → 0
+    "power": 1.0,            # 渐变速率：1.0 = 线性；>1 过渡更靠下部，<1 更平缓
+    "pos": (0, 0),           # 偏移 (x, y)；y 为负则整体上移
 }

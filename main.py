@@ -26,9 +26,11 @@ for p in [PLUGIN_DIR, SCRIPT_DIR]:
     if p not in sys.path:
         sys.path.insert(0, p)
 
-# 卡池封面图 URL 缓存 (30 天 TTL)
+# 卡池封面图缓存 (30 天 TTL)
 CACHE_TTL_DAYS = 30
 POOL_CACHE_FILE = os.path.join(PLUGIN_DIR, "data", "cache", "pool_images.json")
+# 卡池封面图本地存储目录：首次拉取后直接发本地文件，不再把 URL 交给下游加载
+POOL_COVER_DIR = os.path.join(PLUGIN_DIR, "data", "cache", "pool_covers")
 
 # ──────────────────── 辅助函数 ────────────────────
 
@@ -329,12 +331,31 @@ class ArknightsGacha(Star):
         """初始化图片渲染器"""
         try:
             from image_renderer import ImageRenderer
-            self.renderer = ImageRenderer(PLUGIN_DIR)
+            # 立绘缓存画质档位（AstrBot 配置页选择，默认原画质）
+            quality = ""
+            if self.config:
+                quality = str(self.config.get("portrait_cache_quality", "") or "")
+            self.renderer = ImageRenderer(PLUGIN_DIR, portrait_quality=quality)
             await self.renderer.initialize()
             logger.info("[ArkGacha] 图片渲染器已初始化")
         except Exception as e:
             logger.warning(f"[ArkGacha] 图片渲染器初始化失败（图片功能不可用）: {e}")
             self.renderer = None
+
+    def _reload_renderer_professions(self):
+        """
+        刷新渲染器的 干员→职业 映射。
+
+        干员数据由自动更新器刷新后调用，使新干员的职业图标立即可用，
+        避免必须热重载插件才能生效。
+        """
+        if not self.renderer:
+            return
+        try:
+            count = self.renderer.reload_professions()
+            logger.info(f"[ArkGacha] 渲染器职业映射已刷新（{count} 条）")
+        except Exception as e:
+            logger.warning(f"[ArkGacha] 刷新渲染器职业映射失败: {e}")
 
     def _start_updater(self):
         """启动自动更新器（受 auto_update 配置控制，默认开启）"""
@@ -351,6 +372,8 @@ class ArknightsGacha(Star):
                 self._load_pool_data()
                 self._load_active_pools()
                 self._init_engine()
+                # 同步刷新渲染器的职业映射（否则新干员的职业图标要等热重载才生效）
+                self._reload_renderer_professions()
 
             self.updater = AutoUpdater(
                 PLUGIN_DIR,
@@ -383,13 +406,24 @@ class ArknightsGacha(Star):
             return {}
 
     @classmethod
-    def _save_pool_cache(cls, pool_name: str, url: str):
-        """写入/更新 pool_images.json 缓存，同时清理超期条目"""
+    def _save_pool_cache(cls, pool_name: str, url: str,
+                         file_name: Optional[str] = None):
+        """
+        写入/更新 pool_images.json 缓存，同时清理超期条目。
+
+        file_name: 本地封面文件名（相对 POOL_COVER_DIR）。
+                   传 None 时保留该池已有的 file 字段，避免 URL 探测
+                   （_find_valid_url）把已下载好的本地文件记录覆盖掉。
+        """
         try:
             os.makedirs(os.path.dirname(POOL_CACHE_FILE), exist_ok=True)
             data = cls._load_pool_cache()
+            existing = data.get(pool_name)
+            if file_name is None and isinstance(existing, dict):
+                file_name = existing.get("file")
             data[pool_name] = {
                 "url": url,
+                "file": file_name,
                 "cached_at": datetime.now(CST).strftime("%Y-%m-%d %H:%M:%S"),
             }
             # 清理超期条目，防止缓存文件无限膨胀
@@ -407,7 +441,13 @@ class ArknightsGacha(Star):
                     if (now - cached_at).days >= CACHE_TTL_DAYS:
                         expired.append(k)
             for k in expired:
-                data.pop(k, None)
+                v = data.pop(k, None)
+                # 连同本地封面文件一起回收，避免目录里留下孤儿文件
+                if isinstance(v, dict) and v.get("file"):
+                    try:
+                        os.remove(os.path.join(POOL_COVER_DIR, v["file"]))
+                    except OSError:
+                        pass
             with open(POOL_CACHE_FILE, "w", encoding="utf-8") as f:
                 json.dump(data, f, ensure_ascii=False, indent=2)
         except Exception:
@@ -446,6 +486,125 @@ class ArknightsGacha(Star):
             except Exception:
                 continue
         return None
+
+    # ──────────────────── 卡池封面本地化 ────────────────────
+
+    @staticmethod
+    def _safe_cover_filename(pool_name: str, ext: str = "png") -> str:
+        """把卡池名转成安全的文件名（剔除路径非法字符，超长截断）"""
+        import re
+        safe = re.sub(r'[\\/:*?"<>|\r\n\t]+', "_", pool_name).strip(" ._")
+        if not safe:
+            safe = hashlib.md5(pool_name.encode("utf-8")).hexdigest()[:16]
+        return f"{safe[:80]}.{ext}"
+
+    @staticmethod
+    def _pool_cache_fresh(entry) -> bool:
+        """缓存条目是否仍在有效期内（默认 30 天）"""
+        if not isinstance(entry, dict) or not entry.get("cached_at"):
+            return False
+        try:
+            cached_at = datetime.strptime(
+                entry["cached_at"], "%Y-%m-%d %H:%M:%S").replace(tzinfo=CST)
+        except ValueError:
+            return False
+        return (datetime.now(CST) - cached_at).days < CACHE_TTL_DAYS
+
+    async def _download_first_available(self, urls: List[str]):
+        """
+        依次尝试下载候选 URL，返回 (bytes, url, 图片格式)；全部失败返回 (None, None, None)。
+
+        直接 GET 而非 HEAD+GET：封面图体积很小，
+        一次请求即可同时完成"可达性验证 + 取数据"，请求数减半。
+        """
+        import aiohttp
+        from io import BytesIO
+        from PIL import Image
+
+        timeout = aiohttp.ClientTimeout(total=20)
+        try:
+            async with aiohttp.ClientSession(timeout=timeout) as sess:
+                for url in urls:
+                    try:
+                        async with sess.get(url) as resp:
+                            if resp.status != 200:
+                                continue
+                            data = await resp.read()
+                            if not data:
+                                continue
+                            try:
+                                img = Image.open(BytesIO(data))
+                                fmt = (img.format or "").upper()
+                                img.verify()
+                            except Exception:
+                                continue
+                            return data, url, fmt
+                    except Exception:
+                        continue
+        except Exception:
+            pass
+        return None, None, None
+
+    async def _fetch_pool_cover(self, pool_name: str,
+                                urls: List[str]) -> Optional[str]:
+        """探测并下载卡池封面到本地，成功后写缓存并返回本地路径"""
+        entry = self._load_pool_cache().get(pool_name)
+        candidates: List[str] = []
+        if isinstance(entry, dict) and entry.get("url"):
+            candidates.append(entry["url"])
+        for u in urls:
+            if u and u not in candidates:
+                candidates.append(u)
+        if not candidates:
+            return None
+
+        data, used_url, fmt = await self._download_first_available(candidates)
+        if not data:
+            return None
+
+        ext = "jpg" if fmt in ("JPEG", "JPG") else "png"
+        file_name = self._safe_cover_filename(pool_name, ext)
+        try:
+            os.makedirs(POOL_COVER_DIR, exist_ok=True)
+            with open(os.path.join(POOL_COVER_DIR, file_name), "wb") as f:
+                f.write(data)
+        except OSError as e:
+            logger.warning(f"[ArkGacha] 卡池封面写入失败: {e}")
+            return None
+
+        self._save_pool_cache(pool_name, used_url, file_name)
+        return os.path.join(POOL_COVER_DIR, file_name)
+
+    async def _get_pool_cover_path(self, pool_name: str,
+                                   urls: List[str]) -> Optional[str]:
+        """
+        取卡池封面的【本地】路径：下载一次、存 30 天，之后直接发本地文件。
+
+        与旧行为（每次把 URL 传给下游、由平台去 PRTS 加载）的区别：
+        图片从"下游每次现取"变为"插件本地持有"，
+        既不再让下游承担加载压力，也不再依赖 PRTS 的实时可用性。
+
+        策略：
+          1. 本地文件存在且未超期 → 直接返回
+          2. 已超期               → 尝试刷新；刷新失败则继续用旧图（有图好过没图）
+          3. 本地缺失             → 探测 + 下载 + 落盘 + 写缓存
+          4. 全部失败             → 返回 None，由调用方回退旧行为
+        """
+        if not pool_name or not urls:
+            return None
+        try:
+            entry = self._load_pool_cache().get(pool_name)
+            if isinstance(entry, dict) and entry.get("file"):
+                local = os.path.join(POOL_COVER_DIR, entry["file"])
+                if os.path.isfile(local):
+                    if self._pool_cache_fresh(entry):
+                        return local
+                    refreshed = await self._fetch_pool_cover(pool_name, urls)
+                    return refreshed or local
+            return await self._fetch_pool_cover(pool_name, urls)
+        except Exception as e:
+            logger.warning(f"[ArkGacha] 获取卡池封面失败: {e}")
+            return None
 
     def _check_loaded(self) -> Optional[str]:
         """返回错误信息或 None
@@ -787,9 +946,13 @@ class ArknightsGacha(Star):
 
             text = "\n".join(lines)
             urls = get_prts_image_urls(name, pool_type)
-            if urls:
-                # 逐个尝试直到找到可达的 URL（带 30 天缓存）
-                valid_url = await self._find_valid_url(urls, name)
+            # 封面优先走本地缓存（下载一次存 30 天），不再把 URL 直接交给下游加载
+            cover_path = await self._get_pool_cover_path(name, urls)
+            if cover_path:
+                yield event.make_result().message(text).file_image(cover_path)
+            else:
+                # 本地不可用 → 回退旧行为：探测可达 URL 直传
+                valid_url = await self._find_valid_url(urls, name) if urls else None
                 if valid_url:
                     yield event.make_result().message(text).url_image(valid_url)
                 else:
@@ -881,15 +1044,15 @@ class ArknightsGacha(Star):
         yield event.plain_result("\n".join(lines))
 
     # ════════════════════════════════════════════════
-    #  ========== 管理员调试: 抽卡awa ==========
+    #  ========== 管理员调试: 十连awa ==========
     # ════════════════════════════════════════════════
 
     @filter.permission_type(filter.PermissionType.ADMIN)
-    @filter.command("抽卡awa")
+    @filter.command("十连awa")
     async def cmd_debug_ten_pull(self, event: AstrMessageEvent):
         """
         管理员调试指令。无视次数限制进行十连，不记录数据库。
-        用法: /抽卡awa <池编号>
+        用法: /十连awa <池编号>
         """
         err = self._check_loaded()
         if err:
@@ -898,7 +1061,7 @@ class ArknightsGacha(Star):
 
         parts = event.message_str.strip().split()
         if len(parts) < 2 or not parts[1].isdigit():
-            yield event.plain_result("用法: /抽卡awa <池编号>\n例: /抽卡awa 1")
+            yield event.plain_result("用法: /十连awa <池编号>\n例: /十连awa 1")
             return
 
         pool_num = int(parts[1])
@@ -920,7 +1083,7 @@ class ArknightsGacha(Star):
             select_rules=pool.get("select_rules"),
         )
 
-        lines = [f"[抽卡awa·调试] 池{pool_num}「{pool['pool_name']}」"]
+        lines = [f"[十连awa·调试] 池{pool_num}「{pool['pool_name']}」"]
         lines.append(f"  模拟计数器: i={i}→{new_i}, j={j}→{new_j}   (未写入)")
         lines.append("")
         for idx, r in enumerate(results, 1):
@@ -942,7 +1105,70 @@ class ArknightsGacha(Star):
                     results, pool["pool_name"]
                 )
             except Exception as e:
-                logger.warning(f"[ArkGacha] 抽卡awa图片生成失败: {e}")
+                logger.warning(f"[ArkGacha] 十连awa图片生成失败: {e}")
+
+        if image_path and os.path.isfile(image_path):
+            yield event.make_result().message("\n".join(lines)).file_image(image_path)
+        else:
+            yield event.plain_result("\n".join(lines))
+
+    # ════════════════════════════════════════════════
+    #  ========== 管理员调试: 单抽awa ==========
+    # ════════════════════════════════════════════════
+
+    @filter.permission_type(filter.PermissionType.ADMIN)
+    @filter.command("单抽awa")
+    async def cmd_debug_single_pull(self, event: AstrMessageEvent):
+        """
+        管理员调试指令。无视次数限制进行单抽，不记录数据库。
+        用法: /单抽awa <池编号>
+        """
+        err = self._check_loaded()
+        if err:
+            yield event.plain_result(err)
+            return
+
+        parts = event.message_str.strip().split()
+        if len(parts) < 2 or not parts[1].isdigit():
+            yield event.plain_result("用法: /单抽awa <池编号>\n例: /单抽awa 1")
+            return
+
+        pool_num = int(parts[1])
+        pool = self._find_active_pool(pool_num)
+        if not pool:
+            yield event.plain_result(f"未找到编号为 {pool_num} 的卡池。")
+            return
+
+        user_id = event.get_sender_id()
+        i, j = self.db.get_counters(user_id)
+
+        ops_6 = [o["name"] for o in pool.get("operators_6", [])]
+        ops_5 = [o["name"] for o in pool.get("operators_5", [])]
+        pool_type = pool["pool_type_id"]
+
+        # 抽卡（纯计算，不消耗次数，不写入数据库）
+        result, new_i, new_j = self.engine.single_pull(
+            pool_type, ops_6, ops_5, i, j,
+            select_rules=pool.get("select_rules"),
+        )
+
+        star_label = star_mark(result["rarity"])
+        up_tag = " [UP]" if result["is_up"] else ""
+        lines = [
+            f"[单抽awa·调试] 池{pool_num}「{pool['pool_name']}」",
+            f"  模拟计数器: i={i}→{new_i}, j={j}→{new_j}   (未写入)",
+            f"  {result['rarity']}★ {result['name']} {star_label}{up_tag}",
+        ]
+
+        # 尝试生成图片
+        image_path = None
+        if self.renderer:
+            try:
+                image_path = await self.renderer.render_single_pull(
+                    result, pool["pool_name"]
+                )
+            except Exception as e:
+                logger.warning(f"[ArkGacha] 单抽awa图片生成失败: {e}")
 
         if image_path and os.path.isfile(image_path):
             yield event.make_result().message("\n".join(lines)).file_image(image_path)

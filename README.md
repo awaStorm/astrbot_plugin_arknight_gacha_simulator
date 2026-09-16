@@ -99,6 +99,7 @@ git clone https://github.com/awaStorm/astrbot_plugin_arknight_gacha_simulator.gi
 | `data_path` | string | `""` | `cleaned_pools_final.json` 的自定义路径。留空则使用插件自动生成的 `data/processed/` 目录 |
 | `auto_update` | bool | `true` | 启动时是否自动从 GitHub / PRTS 更新卡池数据。**默认开启**：首次运行会拉取数据初始化 |
 | `sign_in_amount` | int | `10` | 每日签到赠送的抽卡次数 |
+| `portrait_cache_quality` | string | `original` | 单抽立绘**缓存画质**：`original` 原画质（不压缩，最清晰，占空间最大）/ `high` 1080px / `medium` 810px / `low` 640px。各档位独立缓存于 `data/cache/elite1_art/<档位>/`，切换后会重新下载立绘；不再使用的旧档位目录可手动删除 |
 
 ---
 
@@ -117,19 +118,25 @@ astrbot_plugin_arknight_gacha_simulator/
 ├── Script/                       # 核心逻辑模块
 │   ├── gacha_engine.py           # 抽卡概率引擎（软保底 / UP / 各池型规则）
 │   ├── image_composer.py         # 图片合成器（构图、光效、星点着色）
-│   ├── composer_config.py        # 合成参数配置
+│   ├── composer_config.py        # 合成参数配置（单抽构图参数集中在此调整）
+│   ├── text_render.py            # 双语文字渲染（描边 + 填充，中英字体自动分工）
+│   ├── camp_logo_map.py          # 干员阵营 → 阵营 Logo 映射表（未命中降级为罗德岛）
 │   ├── image_renderer.py         # 渲染器对外接口 + 头像/职业图标缓存
 │   ├── compose_background.py     # 背景合成
 │   ├── pool_generator.py         # 由清洗数据生成 active_pools / pool_rules
 │   ├── auto_updater.py           # 自动数据更新调度
 │   └── database.py               # SQLite 数据持久化
-├── tools/                        # 离线数据处理工具
+├── tools/                        # 离线数据处理 / 本地调试工具
+│   ├── fetch_characters.py       # 抓取 PRTS 干员数据（含英文名与阵营字段）
 │   ├── fetch_gacha_wikitext.py   # 抓取 PRTS 卡池一览 wikitext
 │   ├── clean_gacha_pools.py      # 解析并分类卡池（含池型识别）
 │   ├── post_process_pools.py     # 后处理：UP 干员标注、时间校验
 │   ├── update_all.py             # 一键跑全量数据流水线
+│   ├── test_single_pull.py       # 单抽结果图本地预览（免启动 AstrBot 调参）
 │   └── ...
-└── gacha_primary_material/       # 本地素材（卡池封面、光效贴图等）
+├── assets/
+│   └── fonts/                    # 随插件分发的字体（含授权协议原文，请勿修改字体文件）
+└── gacha_primary_material/       # 本地素材（背景、装饰星、光柱、职业图标、阵营 Logo 等）
 ```
 
 ---
@@ -178,8 +185,42 @@ main.py（运行时加载 + 引擎解析）
 
 ---
 
+## 更新日志
+
+### v0.4.0
+
+**单抽结果图全面重制**
+
+- 新增**单抽结果图 v3 生成器**（元素表驱动），取代旧版"背景 + 立绘"的简易构图：背景 / 干员立绘 / 阵营 Logo / 带文字职业图标 / 星级五角星 / 中英文姓名 / 装饰星与光柱 / 暗角打光 / 底部渐变，全部元素的位置、大小、透明度、混合模式与层级统一集中在 `Script/composer_config.py` 中可视化调整。
+- 新增**双语文字渲染**（`Script/text_render.py`）：中文与英文由同一字体的 CJK / 拉丁字形自动分工，支持描边 + 填充、字距、可变字重。
+- 新增**阵营 Logo 映射**（`Script/camp_logo_map.py`）：覆盖 46 个阵营；阵营为空、映射未命中或图片缺失时统一降级为罗德岛。
+- 新增**装饰星随机化**：每个副本独立随机尺寸（默认 60%~80%）与位置，并按概率 180° 翻转；翻转后的装饰星可单独设置色调（暖橙）与高度偏移，其附属光柱自动跟随同色。
+- 新增**程序化柔光柱**：支持平顶比例、横纵向衰减、透明度与滤色混合，尺寸随装饰星等比缩放。
+- 光柱层级改用**小数偏移**（默认 `+0.5`），使其稳定位于所属装饰星之下，且不会与相邻元素的整数层级发生冲突。
+
+**资源与数据**
+
+- 新增**带文字职业图标**预拉取：启动时并发拉取八大职业图标并永久缓存于 `data/cache/professions_labeled/`，原有不带文字的图标及其使用逻辑完全不受影响。
+- 卡池封面改为**本地化缓存**：首次探测成功后下载至 `data/cache/pool_covers/` 并保留 30 天，之后直接发送本地文件，不再将 URL 交给下游加载；下载失败时自动回退原有行为。
+- 干员数据抓取扩展 `en`（英文名）与 `logo`（阵营）字段。
+
+---
+
 ## 许可
 
 本项目使用 [MIT License](LICENSE)。
+
+### 第三方字体
+
+**本插件使用了 HarmonyOS Sans 字体。**
+
+| 字体 | 版权 | 授权协议 | 协议原文 |
+|------|------|----------|----------|
+| **HarmonyOS Sans SC Bold** | © 2021 Huawei Device Co., Ltd. | HarmonyOS Sans Fonts License Agreement | [`assets/fonts/LICENSE_HarmonyOS_Sans.txt`](assets/fonts/LICENSE_HarmonyOS_Sans.txt) |
+| **Source Han Sans CN Heavy**（思源黑体，兜底字体） | © Adobe | SIL Open Font License 1.1 | [`assets/fonts/LICENSE_SourceHanSans.txt`](assets/fonts/LICENSE_SourceHanSans.txt) |
+
+上述字体文件均**原样、未做任何修改**地随本插件（应用软件，而非字体软件）一同分发，符合协议中 `bundle`（捆绑）的授权场景；字体不会以任何独立形式对外提供下载。
+
+### 游戏素材
 
 所有干员立绘、卡池封面、音效等素材版权归 **© HYPERGRYPH（鹰角网络）** 及 **PRTS Wiki** 所有，仅供个人娱乐与学习使用，请勿用于商业用途。

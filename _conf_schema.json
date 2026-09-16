@@ -16,5 +16,17 @@
     "description": "每日签到赠送的抽卡次数",
     "default": 10,
     "hint": "每日 /抽卡签到 可领取的抽卡机会次数"
+  },
+  "portrait_cache_quality": {
+    "type": "string",
+    "description": "单抽立绘缓存画质",
+    "options": [
+      "original",
+      "high",
+      "medium",
+      "low"
+    ],
+    "default": "original",
+    "hint": "original = 原画质(不压缩,最清晰,占空间最大)；high = 1080px；medium = 810px；low = 640px。各档位独立缓存，切换后会重新下载立绘；不再使用的旧档位缓存目录可手动删除"
   }
 }

@@ -228,6 +228,9 @@ start_astrbot.bat
 output_test.png
 *.test.png
 
+# Local preview / test render output (由 tools/test_single_pull.py 等生成)
+_tmp_out/
+
 # Dev / test-only directories (image-composition reference & test assets)
 Generator_test/
 resource_test/

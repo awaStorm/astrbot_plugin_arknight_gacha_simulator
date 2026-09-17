@@ -38,6 +38,12 @@ PORTRAIT_DIR = os.path.join(CACHE_DIR, "portraits") # 角色半身像 / 立绘 (
 ELITE1_ART_DIR = os.path.join(CACHE_DIR, "elite1_art")  # 单抽用干员精一立绘 (动态下载缓存, 降质存储)
 RAW_DIR = os.path.join(PLUGIN_DIR, "data", "raw")   # 数据文件 (characters_raw.json 用于职业映射)
 
+# 字体目录。字体【不随插件包分发】，由 font_manager 在首次需要时从官方源下载到
+# FONT_DIR（位于 data/ 下，已被 gitignore），以减少插件包体积。
+# 若使用者想跳过下载，也可手动把字体放到 FALLBACK_FONT_DIR。
+FONT_DIR = os.path.join(PLUGIN_DIR, "data", "fonts")
+FALLBACK_FONT_DIR = os.path.join(PLUGIN_DIR, "assets", "fonts")
+
 
 # =============================================================================
 #  1. 全局背景参数 (Global Background Config)

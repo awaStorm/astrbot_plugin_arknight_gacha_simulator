@@ -33,7 +33,12 @@ from PIL import Image, ImageDraw, ImageFont
 # ---------------------------------------------------------------------------
 # 本文件位于 <插件根>/Script/ ，插件根为其上一级
 ROOT_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-FONT_DIR = os.path.join(ROOT_DIR, "assets", "fonts")
+# 字体查找目录（按优先级）：
+#   1. data/fonts   —— font_manager 首次运行时从官方源下载并缓存（推荐）
+#   2. assets/fonts —— 使用者手动放置字体的位置，可跳过自动下载
+FONT_DIR = os.path.join(ROOT_DIR, "data", "fonts")
+FALLBACK_FONT_DIR = os.path.join(ROOT_DIR, "assets", "fonts")
+FONT_SEARCH_DIRS = (FONT_DIR, FALLBACK_FONT_DIR)
 
 # 按顺序查找，命中第一个存在的文件。
 # 未在元素配置里指定 font 时，中英文都默认走这套候选。
@@ -59,18 +64,24 @@ def resolve_font_path(kind: str, font_file: str = "") -> str:
     """
     解析字体文件路径。
 
-    font_file 非空时优先使用指定文件名（相对 FONT_DIR，也允许绝对路径）；
+    font_file 非空时优先使用指定文件名（在 FONT_SEARCH_DIRS 中查找，也允许绝对路径）；
     为空时按 kind（"latin" / "cjk"）从候选列表里找。
     全部缺失返回空字符串。
     """
     if font_file:
-        p = font_file if os.path.isabs(font_file) else os.path.join(FONT_DIR, font_file)
-        return p if os.path.isfile(p) else ""
+        if os.path.isabs(font_file):
+            return font_file if os.path.isfile(font_file) else ""
+        for d in FONT_SEARCH_DIRS:
+            p = os.path.join(d, font_file)
+            if os.path.isfile(p):
+                return p
+        return ""
     candidates = LATIN_FONTS if kind == "latin" else CJK_FONTS
-    for fn in candidates:
-        p = os.path.join(FONT_DIR, fn)
-        if os.path.isfile(p):
-            return p
+    for d in FONT_SEARCH_DIRS:
+        for fn in candidates:
+            p = os.path.join(d, fn)
+            if os.path.isfile(p):
+                return p
     return ""
 
 
@@ -92,7 +103,8 @@ def get_font(kind: str, size: int, weight: int = 700, font_file: str = ""):
     if not path:
         if kind not in _missing_warned:
             _missing_warned.add(kind)
-            print(f"[text_render] 警告: 找不到 {kind} 字体，请放入 {FONT_DIR}")
+            print(f"[text_render] 警告: 找不到 {kind} 字体；"
+                  f"已尝试 {list(FONT_SEARCH_DIRS)}")
         return None
 
     try:

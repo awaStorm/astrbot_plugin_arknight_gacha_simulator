@@ -121,6 +121,7 @@ astrbot_plugin_arknight_gacha_simulator/
 │   ├── composer_config.py        # 合成参数配置（单抽构图参数集中在此调整）
 │   ├── text_render.py            # 双语文字渲染（描边 + 填充，中英字体自动分工）
 │   ├── camp_logo_map.py          # 干员阵营 → 阵营 Logo 映射表（未命中降级为罗德岛）
+│   ├── font_manager.py           # 字体资源管理（首次运行时下载 + SHA-256 校验 + 缓存）
 │   ├── image_renderer.py         # 渲染器对外接口 + 头像/职业图标缓存
 │   ├── compose_background.py     # 背景合成
 │   ├── pool_generator.py         # 由清洗数据生成 active_pools / pool_rules
@@ -135,7 +136,7 @@ astrbot_plugin_arknight_gacha_simulator/
 │   ├── test_single_pull.py       # 单抽结果图本地预览（免启动 AstrBot 调参）
 │   └── ...
 ├── assets/
-│   └── fonts/                    # 随插件分发的字体（含授权协议原文，请勿修改字体文件）
+│   └── fonts/                    # 字体授权协议原文；字体本身不随包分发，运行时自动下载
 └── gacha_primary_material/       # 本地素材（背景、装饰星、光柱、职业图标、阵营 Logo 等）
 ```
 
@@ -214,12 +215,16 @@ main.py（运行时加载 + 引擎解析）
 
 **本插件使用了 HarmonyOS Sans 字体。**
 
-| 字体 | 版权 | 授权协议 | 协议原文 |
+| 字体 | 版权 | 授权协议 | 获取方式 |
 |------|------|----------|----------|
-| **HarmonyOS Sans SC Bold** | © 2021 Huawei Device Co., Ltd. | HarmonyOS Sans Fonts License Agreement | [`assets/fonts/LICENSE_HarmonyOS_Sans.txt`](assets/fonts/LICENSE_HarmonyOS_Sans.txt) |
-| **Source Han Sans CN Heavy**（思源黑体，兜底字体） | © Adobe | SIL Open Font License 1.1 | [`assets/fonts/LICENSE_SourceHanSans.txt`](assets/fonts/LICENSE_SourceHanSans.txt) |
+| **HarmonyOS Sans SC Bold** | © 2021 Huawei Device Co., Ltd. | HarmonyOS Sans Fonts License Agreement | 首次运行时从 [OpenHarmony 官方仓库](https://github.com/openharmony/utils_system_resources) 下载，SHA-256 校验后缓存于 `data/fonts/` |
+| **Source Han Sans CN Heavy**（思源黑体，可选兜底） | © Adobe | SIL Open Font License 1.1 | 不自动下载，需自行放入 `assets/fonts/` |
 
-上述字体文件均**原样、未做任何修改**地随本插件（应用软件，而非字体软件）一同分发，符合协议中 `bundle`（捆绑）的授权场景；字体不会以任何独立形式对外提供下载。
+**字体不随插件包分发**（以控制插件包体积），而是首次运行时从官方来源获取。
+下载后先做 SHA-256 完整性校验再落盘，字体文件始终是**未经任何修改**的原样副本
+（不做子集化、不改字形与元数据），协议文本会随字体一并保留在缓存目录中。
+
+完整的第三方资源说明与许可合规要点见 **[`THIRD_PARTY_NOTICES.md`](THIRD_PARTY_NOTICES.md)**。
 
 ### 游戏素材
 

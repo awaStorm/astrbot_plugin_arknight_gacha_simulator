@@ -209,10 +209,13 @@ class ArknightsGacha(Star):
             # 4. 初始化抽卡引擎
             self._init_engine()
 
-            # 5. 初始化图片渲染器
+            # 5. 准备字体资源（缺失时从官方源下载并缓存；失败仅告警）
+            await self._init_fonts()
+
+            # 6. 初始化图片渲染器
             await self._init_renderer()
 
-            # 6. 启动自动更新
+            # 7. 启动自动更新
             self._start_updater()
 
             self._loaded = True
@@ -326,6 +329,21 @@ class ArknightsGacha(Star):
         except Exception as e:
             logger.error(f"[ArkGacha] 引擎初始化失败: {e}")
             self.engine = None
+
+    async def _init_fonts(self):
+        """
+        确保文字渲染所需的字体现已就绪。
+
+        字体【不随插件包分发】（以控制插件包体积），首次运行时从
+        OpenHarmony 官方仓库下载、做 SHA-256 校验后缓存到 data/fonts/，
+        后续启动直接复用。任何失败都只告警：字体缺失时结果图不绘制文字，
+        其余功能不受影响，绝不阻断插件启动。
+        """
+        try:
+            from font_manager import ensure_fonts
+            await ensure_fonts()
+        except Exception as e:
+            logger.warning(f"[ArkGacha] 字体准备失败（不影响其它功能）: {e}")
 
     async def _init_renderer(self):
         """初始化图片渲染器"""

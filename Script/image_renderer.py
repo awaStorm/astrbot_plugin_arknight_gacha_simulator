@@ -15,7 +15,6 @@ image_renderer.py - 明日方舟抽卡结果图片渲染器（接入 Generator_t
 import asyncio
 import hashlib
 import json
-import logging
 import os
 import time
 from typing import List, Optional
@@ -23,10 +22,10 @@ from urllib.parse import quote
 
 from PIL import Image
 
+from astrbot.api import logger
+
 import composer_config as cfg
 from image_composer import Composer, profession_map_path
-
-logger = logging.getLogger("ArkGacha.ImageRenderer")
 
 
 # ──────────────────── 常量 ────────────────────
@@ -75,7 +74,8 @@ class ImageRenderer:
                           留空或非法值时回退到 composer_config.DEFAULT_PORTRAIT_QUALITY。
         """
         self.plugin_dir = plugin_dir
-        self.cache_dir = os.path.join(plugin_dir, "data", "cache")
+        # 缓存统一放在框架分配的插件专属数据目录下（见 composer_config.DATA_DIR）
+        self.cache_dir = cfg.CACHE_DIR
         self.portrait_dir = os.path.join(self.cache_dir, "portraits")
         self.profession_dir = os.path.join(self.cache_dir, "professions")
         # 带文字的职业图标（单抽用）。与无文字版分开存放，互不影响。

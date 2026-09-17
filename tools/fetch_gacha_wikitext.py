@@ -6,8 +6,15 @@ import json
 import os
 from curl_cffi import requests
 
+import sys
+
+# 运行时数据目录统一由 composer_config 提供（支持 ARKGACHA_DATA_DIR 环境变量）
+sys.path.insert(0, os.path.join(
+    os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "Script"))
+import composer_config as cfg  # noqa: E402
+
 PRTS_API = "https://prts.wiki/api.php"
-OUTPUT = os.path.join(os.path.dirname(__file__), "..", "data", "raw", "gacha_wikitext.json")
+OUTPUT = os.path.join(cfg.RAW_DIR, "gacha_wikitext.json")
 
 
 def fetch_current_gacha_raw():

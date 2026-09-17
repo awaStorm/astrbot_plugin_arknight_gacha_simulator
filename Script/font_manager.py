@@ -25,11 +25,7 @@ import asyncio
 import hashlib
 import os
 
-try:
-    from astrbot.api import logger
-except ImportError:  # 本地调试（未安装 AstrBot）时的兜底
-    import logging
-    logger = logging.getLogger("arkgacha.font_manager")
+from astrbot.api import logger
 
 import composer_config as cfg
 

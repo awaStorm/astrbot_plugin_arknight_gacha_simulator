@@ -25,7 +25,20 @@ import os
 PLUGIN_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))   # 插件根目录
 MATERIAL_DIR = os.path.join(PLUGIN_DIR, "gacha_primary_material")          # 素材总目录
 STATE_DIR = os.path.join(MATERIAL_DIR, "recruit_ten_result_state")         # 卡底/星级/光效/网点
-CACHE_DIR = os.path.join(PLUGIN_DIR, "data", "cache")                      # 动态下载缓存总目录
+
+# ── 运行时数据目录 ──────────────────────────────────────────────────────────
+# AstrBot 规范：插件运行期间产生的数据（下载缓存、抓取数据、字体、数据库等）
+# 必须存放在框架分配的【插件专属数据目录】 data/plugin_data/<插件名>/，
+# 不得写入 AstrBot 的 data/ 根目录，也不得写入插件安装目录
+# （插件目录属于只读资源区，随插件更新会被整体覆盖）。
+#
+# 取值优先级：
+#   1. 插件入口 main.py 调用框架公开 API StarTools.get_data_dir() 后经 set_data_dir() 注入
+#   2. 环境变量 ARKGACHA_DATA_DIR —— 插件以子进程方式调用 tools/ 下的数据脚本时注入，
+#      保证子脚本写入的位置与插件读取的位置一致
+#   3. 插件目录下的 data/ —— 仅在脱离 AstrBot 手动运行 tools/ 脚本时使用（本地开发）
+DATA_DIR = os.environ.get("ARKGACHA_DATA_DIR") or os.path.join(PLUGIN_DIR, "data")
+CACHE_DIR = os.path.join(DATA_DIR, "cache")                                # 动态下载/生成缓存总目录
 
 # 各资源子目录（与 Generator_test config.py 的目录语义一一对应）
 BG_DIR = MATERIAL_DIR              # 背景底图 / 分隔条 (16:9 / 1024x1024)
@@ -36,13 +49,32 @@ PROF_DIR = os.path.join(CACHE_DIR, "professions")   # 职业图标 (动态下载
 PROFESSION_LABELED_DIR = os.path.join(CACHE_DIR, "professions_labeled")  # 带文字职业图标 (单抽用)
 PORTRAIT_DIR = os.path.join(CACHE_DIR, "portraits") # 角色半身像 / 立绘 (动态下载缓存)
 ELITE1_ART_DIR = os.path.join(CACHE_DIR, "elite1_art")  # 单抽用干员精一立绘 (动态下载缓存, 降质存储)
-RAW_DIR = os.path.join(PLUGIN_DIR, "data", "raw")   # 数据文件 (characters_raw.json 用于职业映射)
+RAW_DIR = os.path.join(DATA_DIR, "raw")     # 数据文件 (characters_raw.json 用于职业映射)
+PROCESSED_DIR = os.path.join(DATA_DIR, "processed")   # 清洗后的卡池/规则数据
 
 # 字体目录。字体【不随插件包分发】，由 font_manager 在首次需要时从官方源下载到
-# FONT_DIR（位于 data/ 下，已被 gitignore），以减少插件包体积。
-# 若使用者想跳过下载，也可手动把字体放到 FALLBACK_FONT_DIR。
-FONT_DIR = os.path.join(PLUGIN_DIR, "data", "fonts")
+# FONT_DIR（位于插件专属数据目录下），以减少插件包体积。
+# 若使用者想跳过下载，也可手动把字体放到 FALLBACK_FONT_DIR（随插件分发的只读位置）。
+FONT_DIR = os.path.join(DATA_DIR, "fonts")
 FALLBACK_FONT_DIR = os.path.join(PLUGIN_DIR, "assets", "fonts")
+
+def set_data_dir(path: str) -> None:
+    """
+    注入 AstrBot 分配的插件专属数据目录（data/plugin_data/<插件名>/）。
+
+    由插件入口 main.py 在初始化时调用，调用来源必须是框架公开 API：
+        from astrbot.api.star import StarTools
+        set_data_dir(StarTools.get_data_dir(PLUGIN_NAME))
+
+    所有运行时数据（缓存 / 抓取数据 / 字体 / 数据库）都会落到该目录下，
+    既不会污染 AstrBot 的 data/ 根目录，也不会写入会被更新覆盖的插件目录。
+    """
+    global DATA_DIR, CACHE_DIR, RAW_DIR, PROCESSED_DIR, FONT_DIR
+    DATA_DIR = str(path)
+    CACHE_DIR = os.path.join(DATA_DIR, "cache")
+    RAW_DIR = os.path.join(DATA_DIR, "raw")
+    PROCESSED_DIR = os.path.join(DATA_DIR, "processed")
+    FONT_DIR = os.path.join(DATA_DIR, "fonts")
 
 
 # =============================================================================

@@ -13,8 +13,11 @@ from typing import Dict, List, Optional
 from urllib.parse import quote
 
 from astrbot.api.event import filter, AstrMessageEvent
-from astrbot.api.star import Context, Star
+from astrbot.api.star import Context, Star, StarTools
 from astrbot.api import AstrBotConfig, logger
+
+# 插件唯一标识：用于向框架申请专属数据目录 data/plugin_data/<PLUGIN_NAME>/
+PLUGIN_NAME = "astrbot_plugin_arknight_gacha_simulator"
 
 # 中国时区
 CST = timezone(timedelta(hours=8))
@@ -25,6 +28,8 @@ SCRIPT_DIR = os.path.join(PLUGIN_DIR, "Script")
 for p in [PLUGIN_DIR, SCRIPT_DIR]:
     if p not in sys.path:
         sys.path.insert(0, p)
+
+import composer_config  # noqa: E402  运行时数据目录的统一来源
 
 # 卡池封面图缓存 (30 天 TTL)
 CACHE_TTL_DAYS = 30
@@ -175,6 +180,23 @@ class ArknightsGacha(Star):
         super().__init__(context)
         self.config = config or {}
 
+        # 向框架申请插件专属数据目录，并注入给配置模块。
+        # 所有运行时数据（下载缓存 / 抓取数据 / 字体 / 数据库）都存放于该目录：
+        #   · 不污染 AstrBot 的 data/ 根目录
+        #   · 不写入插件安装目录（插件目录属于只读资源区，随更新会被整体覆盖）
+        global POOL_CACHE_FILE, POOL_COVER_DIR, DATA_DIR
+        DATA_DIR = str(StarTools.get_data_dir(PLUGIN_NAME))
+        # 兼容旧版本：迁移历史遗留数据，避免老用户升级后丢失抽卡次数 /
+        # 签到记录 / 潜能仓库。迁移内容与访问范围见 plugin_migrate 模块说明。
+        try:
+            from plugin_migrate import ensure_migrated
+            ensure_migrated()
+        except Exception as e:
+            logger.warning(f"[ArkGacha] 旧数据迁移检查失败（忽略）: {e}")
+        composer_config.set_data_dir(DATA_DIR)
+        POOL_CACHE_FILE = os.path.join(DATA_DIR, "cache", "pool_images.json")
+        POOL_COVER_DIR = os.path.join(DATA_DIR, "cache", "pool_covers")
+
         # 数据
         self.pools: List[Dict] = []
         self.active_pools: List[Dict] = []
@@ -247,7 +269,7 @@ class ArknightsGacha(Star):
         待 updater 生成数据后通过 on_after_update 回调重新加载。
         """
         candidates = [
-            os.path.join(PLUGIN_DIR, "data", "processed"),
+            composer_config.PROCESSED_DIR,
         ]
         path = _find_file("cleaned_pools_final.json", candidates)
         if not path:
@@ -263,13 +285,13 @@ class ArknightsGacha(Star):
 
     def _load_active_pools(self):
         """加载/重新生成 active_pools.json"""
-        active_path = os.path.join(PLUGIN_DIR, "data", "processed", "active_pools.json")
+        active_path = os.path.join(composer_config.PROCESSED_DIR, "active_pools.json")
 
         # 尝试重新生成（对比当前时间）
         try:
             from pool_generator import generate_active_pools
             pools_path = _find_file("cleaned_pools_final.json", [
-                os.path.join(PLUGIN_DIR, "data", "processed"),
+                composer_config.PROCESSED_DIR,
             ])
             if pools_path:
                 active_data = generate_active_pools(pools_path)
@@ -288,13 +310,12 @@ class ArknightsGacha(Star):
             self.active_pools = []
 
     def _init_database(self):
-        """初始化 SQLite 数据库（存放于 AstrBot/data/ 目录）"""
+        """初始化 SQLite 数据库（存放于框架分配的插件专属数据目录）"""
         try:
             from db_manager import DBManager
 
-            # AstrBot 项目级 data/ 目录
-            astrbot_data = os.path.join(PLUGIN_DIR, "..", "..")
-            db_dir = os.path.abspath(astrbot_data) if os.path.isdir(os.path.abspath(astrbot_data)) else os.path.join(PLUGIN_DIR, "data")
+            # data/plugin_data/<插件名>/user.db
+            db_dir = DATA_DIR
             os.makedirs(db_dir, exist_ok=True)
             db_path = os.path.join(db_dir, "user.db")
 
@@ -306,8 +327,8 @@ class ArknightsGacha(Star):
 
     def _init_engine(self):
         """初始化抽卡概率引擎"""
-        bp_path = os.path.join(PLUGIN_DIR, "data", "processed", "base_pools.json")
-        rules_path = os.path.join(PLUGIN_DIR, "data", "processed", "pool_rules.json")
+        bp_path = os.path.join(composer_config.PROCESSED_DIR, "base_pools.json")
+        rules_path = os.path.join(composer_config.PROCESSED_DIR, "pool_rules.json")
 
         if not os.path.isfile(bp_path) or not os.path.isfile(rules_path):
             # 尝试自动生成

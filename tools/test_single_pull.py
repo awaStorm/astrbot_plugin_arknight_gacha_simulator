@@ -30,6 +30,23 @@ for _p in (ROOT, SCRIPT_DIR):
     if _p not in sys.path:
         sys.path.insert(0, _p)
 
+# ── 本地调试用 astrbot 桩 ──
+# 插件代码按框架规范统一使用 `from astrbot.api import logger`（禁止内置 logging）。
+# 在未安装 AstrBot 的环境里单独运行本调试脚本时，注入一个仅含 logger 的最小桩，
+# 使 Script/ 下的模块可被正常导入；不影响插件在 AstrBot 内的真实行为。
+try:
+    import astrbot.api  # noqa: F401
+except ImportError:
+    import logging as _logging
+    import types as _types
+
+    _astrbot = _types.ModuleType("astrbot")
+    _api = _types.ModuleType("astrbot.api")
+    _api.logger = _logging.getLogger("ArkGacha.local")
+    _astrbot.api = _api
+    sys.modules.setdefault("astrbot", _astrbot)
+    sys.modules.setdefault("astrbot.api", _api)
+
 import composer_config as cfg            # noqa: E402  读取构图参数
 from image_renderer import ImageRenderer  # noqa: E402
 

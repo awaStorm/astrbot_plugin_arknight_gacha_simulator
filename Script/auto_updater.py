@@ -26,6 +26,8 @@ from datetime import datetime, timezone, timedelta
 from typing import Callable, Optional, Set, Tuple
 from astrbot.api import logger
 
+import composer_config as cfg
+
 # 中国时区（与 pool_generator 保持一致）
 CST = timezone(timedelta(hours=8))
 
@@ -58,7 +60,8 @@ class AutoUpdater:
         self.on_before_update = on_before_update
         self.on_after_update = on_after_update
 
-        self.gacha_table_path = os.path.join(plugin_dir, "data", "gacha_table.json")
+        # 运行时数据统一存放于框架分配的插件专属数据目录（见 composer_config.DATA_DIR）
+        self.gacha_table_path = os.path.join(cfg.DATA_DIR, "gacha_table.json")
         self.tools_dir = os.path.join(plugin_dir, "tools")
 
         self._timer_task: Optional[asyncio.Task] = None
@@ -170,8 +173,8 @@ class AutoUpdater:
             return False
 
         # 3) 对比
-        prts_path = os.path.join(self.plugin_dir, "data", "processed", "cleaned_pools.json")
-        local_path = os.path.join(self.plugin_dir, "data", "processed", "cleaned_pools_final.json")
+        prts_path = os.path.join(cfg.PROCESSED_DIR, "cleaned_pools.json")
+        local_path = os.path.join(cfg.PROCESSED_DIR, "cleaned_pools_final.json")
 
         if not os.path.isfile(prts_path):
             return False
@@ -351,12 +354,15 @@ class AutoUpdater:
 
         def _run():
             try:
+                # 把插件专属数据目录传给子脚本，保证其写入位置与插件读取位置一致
+                env = {**os.environ, "ARKGACHA_DATA_DIR": cfg.DATA_DIR}
                 proc = subprocess.run(
                     cmd,
                     cwd=cwd,
                     capture_output=True,
                     text=True,
                     timeout=300,
+                    env=env,
                 )
                 if proc.returncode != 0:
                     logger.error(f"[AutoUpdater] [{name}] 失败 (exit {proc.returncode})")

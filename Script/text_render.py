@@ -33,12 +33,19 @@ from PIL import Image, ImageDraw, ImageFont
 # ---------------------------------------------------------------------------
 # 本文件位于 <插件根>/Script/ ，插件根为其上一级
 ROOT_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-# 字体查找目录（按优先级）：
-#   1. data/fonts   —— font_manager 首次运行时从官方源下载并缓存（推荐）
-#   2. assets/fonts —— 使用者手动放置字体的位置，可跳过自动下载
-FONT_DIR = os.path.join(ROOT_DIR, "data", "fonts")
-FALLBACK_FONT_DIR = os.path.join(ROOT_DIR, "assets", "fonts")
-FONT_SEARCH_DIRS = (FONT_DIR, FALLBACK_FONT_DIR)
+
+
+def _font_search_dirs() -> tuple:
+    """
+    字体查找目录（按优先级）：
+      1. cfg.FONT_DIR         —— 位于框架分配的插件专属数据目录下，
+                                 font_manager 首次运行时从官方源下载（推荐）
+      2. cfg.FALLBACK_FONT_DIR —— 使用者手动放置字体的位置，可跳过自动下载
+
+    每次调用都重新读取配置模块，确保 main.py 注入数据目录后立即生效。
+    """
+    import composer_config as _cfg
+    return (_cfg.FONT_DIR, _cfg.FALLBACK_FONT_DIR)
 
 # 按顺序查找，命中第一个存在的文件。
 # 未在元素配置里指定 font 时，中英文都默认走这套候选。
@@ -68,16 +75,17 @@ def resolve_font_path(kind: str, font_file: str = "") -> str:
     为空时按 kind（"latin" / "cjk"）从候选列表里找。
     全部缺失返回空字符串。
     """
+    dirs = _font_search_dirs()
     if font_file:
         if os.path.isabs(font_file):
             return font_file if os.path.isfile(font_file) else ""
-        for d in FONT_SEARCH_DIRS:
+        for d in dirs:
             p = os.path.join(d, font_file)
             if os.path.isfile(p):
                 return p
         return ""
     candidates = LATIN_FONTS if kind == "latin" else CJK_FONTS
-    for d in FONT_SEARCH_DIRS:
+    for d in dirs:
         for fn in candidates:
             p = os.path.join(d, fn)
             if os.path.isfile(p):
@@ -104,7 +112,7 @@ def get_font(kind: str, size: int, weight: int = 700, font_file: str = ""):
         if kind not in _missing_warned:
             _missing_warned.add(kind)
             print(f"[text_render] 警告: 找不到 {kind} 字体；"
-                  f"已尝试 {list(FONT_SEARCH_DIRS)}")
+                  f"已尝试 {list(_font_search_dirs())}")
         return None
 
     try:

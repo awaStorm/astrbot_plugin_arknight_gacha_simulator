@@ -112,9 +112,9 @@ astrbot_plugin_arknight_gacha_simulator/
 ├── _conf_schema.json             # 配置项 schema
 ├── requirements.txt              # Python 依赖
 ├── push.bat                      # 一键提交并推送 GitHub 脚本
-├── data/
+├── data/                         # 运行时数据（本地调试时的默认位置，已 gitignore）
 │   ├── gacha_table.json          # 官方卡池表（随版本更新）
-│   └── processed/                # 处理后的卡池/规则数据（运行时生成，已 gitignore）
+│   └── processed/                # 处理后的卡池/规则数据（运行时生成）
 ├── Script/                       # 核心逻辑模块
 │   ├── gacha_engine.py           # 抽卡概率引擎（软保底 / UP / 各池型规则）
 │   ├── image_composer.py         # 图片合成器（构图、光效、星点着色）
@@ -187,6 +187,26 @@ main.py（运行时加载 + 引擎解析）
 ---
 
 ## 更新日志
+
+### v0.4.2
+
+**框架合规化调整**
+
+- **日志**：移除全部内置 `logging` 用法，统一改为从 `astrbot.api` 导入 `logger`（`Script/image_renderer.py`、`Script/font_manager.py`）。
+- **数据持久化**：运行时数据（下载缓存、抓取数据、字体、SQLite 数据库）不再写入 AstrBot 的 `data/` 根目录，也不再写入插件安装目录，统一改由框架公开 API `StarTools.get_data_dir()` 分配插件专属目录 `data/plugin_data/<插件名>/`。
+  - 插件入口 `main.py` 取得目录后注入 `composer_config.set_data_dir()`，各模块统一从 `composer_config` 取路径。
+  - 插件以子进程方式调用 `tools/` 下的数据脚本时，通过 `ARKGACHA_DATA_DIR` 环境变量把该目录透传下去，保证子脚本写入位置与插件读取位置一致。
+  - 脱离 AstrBot 手动运行 `tools/` 脚本（本地开发）时退回插件目录下的 `data/`。
+  - **旧数据自动迁移**：检测到历史遗留数据时会自动迁移到新的专属目录，老用户升级后不会丢失抽卡次数、签到记录与潜能仓库。迁移分两处进行，且仅在「新位置尚不存在数据」时执行，绝不覆盖既有数据；失败也只告警，不影响插件启动：
+    1. 插件安装目录 `data/` 下的缓存 / 抓取数据 / 字体 → 插件专属目录；
+    2. AstrBot 数据根目录下的旧版 `user.db`（含 SQLite 的 `-wal` / `-shm` 伴生文件）→ 插件专属目录。第 2 项为**受限迁移**：只针对 `user.db` 这几个确定文件，不遍历、不读写该目录下的其它内容。
+
+### v0.4.1
+
+**轻量化包体**
+
+- 字体文件不再随插件包分发，改为首次运行时从 **OpenHarmony 官方仓库**下载，并做 SHA-256 完整性校验后缓存到本地（详见 [`THIRD_PARTY_NOTICES.md`](THIRD_PARTY_NOTICES.md)）。
+- 插件包体积由约 21 MB 降至约 5 MB。
 
 ### v0.4.0
 

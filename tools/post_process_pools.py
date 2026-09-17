@@ -198,10 +198,20 @@ def post_process(input_path, characters_path, output_path):
 
 
 if __name__ == '__main__':
+    import os
     import sys
-    input_path = sys.argv[1] if len(sys.argv) > 1 else '../data/processed/cleaned_pools.json'
-    characters_path = sys.argv[2] if len(sys.argv) > 2 else '../data/raw/characters_raw.json'
-    output_path = sys.argv[3] if len(sys.argv) > 3 else '../data/processed/cleaned_pools_final.json'
+
+    # 运行时数据目录统一由 composer_config 提供（支持 ARKGACHA_DATA_DIR 环境变量）
+    sys.path.insert(0, os.path.join(
+        os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "Script"))
+    import composer_config as cfg
+
+    input_path = (sys.argv[1] if len(sys.argv) > 1
+                  else os.path.join(cfg.PROCESSED_DIR, "cleaned_pools.json"))
+    characters_path = (sys.argv[2] if len(sys.argv) > 2
+                       else os.path.join(cfg.RAW_DIR, "characters_raw.json"))
+    output_path = (sys.argv[3] if len(sys.argv) > 3
+                   else os.path.join(cfg.PROCESSED_DIR, "cleaned_pools_final.json"))
 
     try:
         post_process(input_path, characters_path, output_path)

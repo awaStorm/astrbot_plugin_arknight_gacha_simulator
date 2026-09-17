@@ -9,10 +9,19 @@
 """
 import json
 import os
+import sys
+
 from curl_cffi import requests
 
+# 运行时数据目录统一由 composer_config 提供。
+# 插件以子进程方式调用本脚本时会注入 ARKGACHA_DATA_DIR 环境变量，
+# 确保写入位置与插件读取位置一致；手动运行时则回退到插件目录下的 data/。
+sys.path.insert(0, os.path.join(
+    os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "Script"))
+import composer_config as cfg  # noqa: E402
+
 PRTS_API = "https://prts.wiki/api.php"
-OUTPUT = os.path.join(os.path.dirname(__file__), "..", "data", "raw", "characters_raw.json")
+OUTPUT = os.path.join(cfg.RAW_DIR, "characters_raw.json")
 
 # MediaWiki cargoquery 单次请求上限
 PAGE_SIZE = 500

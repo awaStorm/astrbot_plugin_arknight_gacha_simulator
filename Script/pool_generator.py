@@ -22,6 +22,10 @@ from typing import Dict, List, Optional
 # --- 路径查找 ---
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 PLUGIN_DIR = os.path.dirname(SCRIPT_DIR)  # Script 的父目录 = 插件根目录
+if SCRIPT_DIR not in sys.path:
+    sys.path.insert(0, SCRIPT_DIR)
+
+import composer_config as cfg  # noqa: E402  运行时数据目录的统一来源
 
 # 中国时区
 CST = timezone(timedelta(hours=8))
@@ -37,16 +41,16 @@ def find_file(filename: str, search_dirs: List[str]) -> Optional[str]:
 
 
 def resolve_data_paths():
-    """定位所有需要的数据文件（使用插件根目录下的 data/）"""
+    """定位所有需要的数据文件（使用插件专属数据目录，见 composer_config.DATA_DIR）"""
     chars_path = find_file("characters_raw.json", [
-        os.path.join(PLUGIN_DIR, "data", "raw"),
-        os.path.join(PLUGIN_DIR, "data"),
+        cfg.RAW_DIR,
+        cfg.DATA_DIR,
     ])
     pools_path = find_file("cleaned_pools_final.json", [
-        os.path.join(PLUGIN_DIR, "data", "processed"),
+        cfg.PROCESSED_DIR,
     ])
 
-    output_dir = os.path.join(PLUGIN_DIR, "data", "processed")
+    output_dir = cfg.PROCESSED_DIR
     os.makedirs(output_dir, exist_ok=True)
 
     base_out = os.path.join(output_dir, "base_pools.json")

@@ -8,6 +8,11 @@ import subprocess
 
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, SCRIPT_DIR)
+# 运行时数据目录统一由 composer_config 提供。
+# 插件以子进程方式调用本脚本时会注入 ARKGACHA_DATA_DIR，并经 os.environ
+# 自动透传给下面 run_step 调起的各级子脚本。
+sys.path.insert(0, os.path.join(os.path.dirname(SCRIPT_DIR), "Script"))
+import composer_config as cfg  # noqa: E402
 
 
 def run_step(label, script_name, *args):
@@ -45,7 +50,7 @@ def main():
 
     print(f"\n{'=' * 60}")
     print("  全流程更新完成！")
-    print(f"  最终数据: {os.path.join(SCRIPT_DIR, '..', 'data', 'processed', 'cleaned_pools_final.json')}")
+    print(f"  最终数据: {os.path.join(cfg.PROCESSED_DIR, 'cleaned_pools_final.json')}")
     print(f"{'=' * 60}")
 
 

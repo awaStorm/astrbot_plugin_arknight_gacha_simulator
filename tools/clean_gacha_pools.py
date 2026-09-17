@@ -503,9 +503,18 @@ def clean_prts_data(raw_file_path, output_file_path):
 
 
 if __name__ == '__main__':
+    import os
     import sys
-    input_file = sys.argv[1] if len(sys.argv) > 1 else '../data/raw/gacha_wikitext.json'
-    output_file = sys.argv[2] if len(sys.argv) > 2 else '../data/processed/cleaned_pools.json'
+
+    # 运行时数据目录统一由 composer_config 提供（支持 ARKGACHA_DATA_DIR 环境变量）
+    sys.path.insert(0, os.path.join(
+        os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "Script"))
+    import composer_config as cfg
+
+    input_file = (sys.argv[1] if len(sys.argv) > 1
+                  else os.path.join(cfg.RAW_DIR, "gacha_wikitext.json"))
+    output_file = (sys.argv[2] if len(sys.argv) > 2
+                   else os.path.join(cfg.PROCESSED_DIR, "cleaned_pools.json"))
 
     try:
         result = clean_prts_data(input_file, output_file)

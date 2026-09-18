@@ -25,9 +25,29 @@ CST = timezone(timedelta(hours=8))
 # 插件目录
 PLUGIN_DIR = os.path.dirname(os.path.abspath(__file__))
 SCRIPT_DIR = os.path.join(PLUGIN_DIR, "Script")
-for p in [PLUGIN_DIR, SCRIPT_DIR]:
-    if p not in sys.path:
-        sys.path.insert(0, p)
+# 强制把本插件目录置于 sys.path 最前：若其它插件也提供了同名模块，
+# 必须保证优先命中本插件自己的实现（仅"不存在才插入"不足以应对这种情况）。
+for p in (SCRIPT_DIR, PLUGIN_DIR):
+    if p in sys.path:
+        sys.path.remove(p)
+    sys.path.insert(0, p)
+
+# ── 清理同名模块缓存（关键，勿删）─────────────────────────────────────────
+# AstrBot 在同一进程内加载 / 热重载插件时，sys.modules 中可能残留【旧版本】
+# 或【其它插件】的同名模块。此时 `import composer_config` 会直接命中缓存，
+# 拿到的却是旧对象，表现为：
+#     module 'composer_config' has no attribute 'set_data_dir'
+# 进而导致插件在市场安装 / 更新后无法加载。
+# 因此在首次导入前，先把本插件会用到的同名模块从缓存中剔除，
+# 保证后续 import 一定解析到本插件 Script/ 目录下的实现。
+_LOCAL_MODULES = (
+    "composer_config", "text_render", "camp_logo_map", "font_manager",
+    "plugin_migrate", "image_composer", "image_renderer", "gacha_engine",
+    "database", "db_manager", "pool_generator", "auto_updater",
+    "compose_background",
+)
+for _mod in _LOCAL_MODULES:
+    sys.modules.pop(_mod, None)
 
 import composer_config  # noqa: E402  运行时数据目录的统一来源
 

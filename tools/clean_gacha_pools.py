@@ -511,6 +511,7 @@ if __name__ == '__main__':
         os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "Script"))
     import composer_config as cfg
 
+    cfg.ensure_data_dirs()   # 确保输入/输出目录存在
     input_file = (sys.argv[1] if len(sys.argv) > 1
                   else os.path.join(cfg.RAW_DIR, "gacha_wikitext.json"))
     output_file = (sys.argv[2] if len(sys.argv) > 2

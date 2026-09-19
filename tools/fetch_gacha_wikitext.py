@@ -15,6 +15,7 @@ import composer_config as cfg  # noqa: E402
 
 PRTS_API = "https://prts.wiki/api.php"
 OUTPUT = os.path.join(cfg.RAW_DIR, "gacha_wikitext.json")
+cfg.ensure_data_dirs()   # 确保输出目录存在（否则写入会因 [Errno 2] 失败）
 
 
 def fetch_current_gacha_raw():

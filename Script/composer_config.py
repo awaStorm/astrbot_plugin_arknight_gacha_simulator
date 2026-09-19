@@ -70,11 +70,36 @@ def set_data_dir(path: str) -> None:
     既不会污染 AstrBot 的 data/ 根目录，也不会写入会被更新覆盖的插件目录。
     """
     global DATA_DIR, CACHE_DIR, RAW_DIR, PROCESSED_DIR, FONT_DIR
+    # 下面这 4 个缓存子目录常量是在【模块导入时】用当时的 CACHE_DIR 绑定死的，
+    # 必须在这里一并重算！否则它们会停留在默认的 <插件目录>/data/cache 下，
+    # 而写入方（image_renderer 用的是 cfg.CACHE_DIR，属性访问拿到新值）走的是
+    # 插件专属数据目录 —— 造成"写的目录"和"读的目录"永久错位：
+    # 半身像 / 职业图标 / 带文字职业图标 / 精一立绘 会全部读不到。
+    global PROF_DIR, PROFESSION_LABELED_DIR, PORTRAIT_DIR, ELITE1_ART_DIR
     DATA_DIR = str(path)
     CACHE_DIR = os.path.join(DATA_DIR, "cache")
     RAW_DIR = os.path.join(DATA_DIR, "raw")
     PROCESSED_DIR = os.path.join(DATA_DIR, "processed")
     FONT_DIR = os.path.join(DATA_DIR, "fonts")
+    PROF_DIR = os.path.join(CACHE_DIR, "professions")
+    PROFESSION_LABELED_DIR = os.path.join(CACHE_DIR, "professions_labeled")
+    PORTRAIT_DIR = os.path.join(CACHE_DIR, "portraits")
+    ELITE1_ART_DIR = os.path.join(CACHE_DIR, "elite1_art")
+
+
+def ensure_data_dirs() -> None:
+    """
+    确保运行时数据子目录存在。
+
+    数据拉取脚本（tools/ 下）会直接向 raw/、processed/ 写文件，
+    目录不存在时会因 [Errno 2] 写入失败。插件入口与各数据脚本在写入前
+    都应先调用本函数。
+    """
+    for d in (DATA_DIR, CACHE_DIR, RAW_DIR, PROCESSED_DIR, FONT_DIR):
+        try:
+            os.makedirs(d, exist_ok=True)
+        except OSError:
+            pass
 
 
 # =============================================================================
@@ -659,7 +684,7 @@ SP3_VIGNETTE = {
     "darkness": 0.7,        # 最暗处的不透明度（0 ~ 1，越大四周越黑）
     "color": (0, 0, 0),      # 暗角颜色
     "invert": False,         # True = 反转（中心变暗、四周亮）
-    "power": 2,            # 渐变曲线指数：>1 更集中，<1 更平缓
+    "power": 1.1            # 渐变曲线指数：>1 更集中，<1 更平缓
 }
 
 # -----------------------------------------------------------------------------

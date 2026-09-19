@@ -20,6 +20,7 @@ image_composer.py - 抽卡十连图合成器（插件实际使用版）
 
 import json
 import os
+from collections import OrderedDict
 
 from PIL import Image, ImageChops, ImageDraw, ImageEnhance
 
@@ -396,7 +397,12 @@ def _prepare_background(img: Image.Image) -> Image.Image:
 class Composer:
     """插件实际使用的十连图合成器"""
 
-    def __init__(self):
+    def __init__(self, elite1_art_dir: str = ""):
+        # 精一立绘的【实际】缓存目录，由 ImageRenderer 按其画质档位注入
+        # （形如 <cache>/elite1_art/original）。
+        # 留空时 _load_elite1_art 会回退到 cfg.ELITE1_ART_DIR 并在其子目录中兜底查找，
+        # 因此直接 Composer() 构造（如 tools/ 下的调试脚本）依然可用。
+        self.elite1_art_dir = elite1_art_dir or ""
         self._bg = None
         self._separator = None
         self._card_backs = {}
@@ -409,6 +415,12 @@ class Composer:
         self._sp3_asset_cache = {}
         # 程序生成的光柱缓存 {参数元组: RGBA 图像}
         self._sp3_beam_cache = {}
+        # 精一立绘解码缓存 {干员名: RGBA 图像}，LRU 淘汰。
+        # 立绘是 1024×1024 级别的 PNG，解码一次几十毫秒，十连要解 10 张，
+        # 缓存后连续抽卡 / 同一干员重复出现时可直接复用。
+        # 单张约 4MB，上限 12 张（≈48MB），避免长时间运行后内存无限增长。
+        self._elite1_art_cache: OrderedDict = OrderedDict()
+        self._elite1_art_cache_max = 12
         self._load_materials()
 
     # -- 素材加载 (全部来自插件素材目录) --
@@ -1186,16 +1198,57 @@ class Composer:
 
     # -- 加载缓存好的干员精一立绘（可能为 WEBP/PNG） --
     def _load_elite1_art(self, char_name: str):
-        """读取缓存的干员精一立绘，返回 RGBA 图像或 None；缺失时按扩展名兜底查找"""
-        d = cfg.ELITE1_ART_DIR
-        for fn in (f"{char_name}.webp", f"{char_name}.png"):
-            p = os.path.join(d, fn)
-            if os.path.isfile(p):
-                try:
-                    return Image.open(p).convert("RGBA")
-                except Exception:
-                    continue
-        return None
+        """读取缓存的干员精一立绘，返回 RGBA 图像或 None。
+
+        查找顺序（任一命中即返回）：
+          1. 渲染器注入的目录 —— 即当前画质档位目录 elite1_art/<档位>/
+          2. cfg.ELITE1_ART_DIR 根目录 —— 兼容历史缓存，以及直接构造 Composer 的场合
+          3. 根目录下的各档位子目录 —— 兜底（注入缺失时仍能找到立绘）
+        扩展名 png / webp 都尝试（原画质档为 png，压缩档为 webp）。
+
+        结果按干员名做 LRU 缓存：命中时直接返回已解码的图像，跳过磁盘 IO 与
+        PNG 解码。注意返回的是【共享对象】，调用方只可读取
+        （resize / paste 都不修改原图，现有调用方均满足此约束）。
+        """
+        cache = self._elite1_art_cache
+        cached = cache.get(char_name)
+        if cached is not None:
+            cache.move_to_end(char_name)
+            return cached
+
+        candidates = []
+        if self.elite1_art_dir:
+            candidates.append(self.elite1_art_dir)
+        candidates.append(cfg.ELITE1_ART_DIR)
+        try:
+            for name in sorted(os.listdir(cfg.ELITE1_ART_DIR)):
+                sub = os.path.join(cfg.ELITE1_ART_DIR, name)
+                if os.path.isdir(sub) and sub not in candidates:
+                    candidates.append(sub)
+        except OSError:
+            pass
+
+        found = None
+        for d in candidates:
+            for fn in (f"{char_name}.png", f"{char_name}.webp"):
+                p = os.path.join(d, fn)
+                if os.path.isfile(p):
+                    try:
+                        found = Image.open(p).convert("RGBA")
+                    except Exception:
+                        continue
+                    break
+            if found is not None:
+                break
+
+        if found is None:
+            return None
+
+        cache[char_name] = found
+        cache.move_to_end(char_name)
+        while len(cache) > self._elite1_art_cache_max:
+            cache.popitem(last=False)
+        return found
 
     # =====================================================================
     #  单抽结果图 v3（元素表驱动）

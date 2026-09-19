@@ -214,6 +214,10 @@ class ArknightsGacha(Star):
         except Exception as e:
             logger.warning(f"[ArkGacha] 旧数据迁移检查失败（忽略）: {e}")
         composer_config.set_data_dir(DATA_DIR)
+        # 预先建好运行时数据子目录：tools/ 下的数据拉取脚本会直接向 raw/、
+        # processed/ 写文件，若目录不存在会因 [Errno 2] 写入失败，
+        # 进而导致卡池数据永远拉不下来、抽卡引擎无法初始化。
+        composer_config.ensure_data_dirs()
         POOL_CACHE_FILE = os.path.join(DATA_DIR, "cache", "pool_images.json")
         POOL_COVER_DIR = os.path.join(DATA_DIR, "cache", "pool_covers")
 
@@ -227,6 +231,11 @@ class ArknightsGacha(Star):
         self.db = None
         self.updater = None
         self.renderer = None  # 图片渲染器
+        # 自动更新器的启动任务。必须持有引用：事件循环对 Task 只持弱引用，
+        # 不保存的话它可能在 await 期间被 GC 回收，导致首次数据拉取静默失败。
+        self._updater_task: Optional[asyncio.Task] = None
+        # 数据缺失时触发的后台恢复任务（本地重建 + 必要时联网拉取），同样须持引用
+        self._recover_task: Optional[asyncio.Task] = None
 
         # 状态
         self._loaded = False
@@ -248,8 +257,8 @@ class ArknightsGacha(Star):
             # 3. 初始化数据库
             self._init_database()
 
-            # 4. 初始化抽卡引擎
-            self._init_engine()
+            # 4. 初始化抽卡引擎（放线程：数据缺失时会同步拉起子进程，最长 60s）
+            await asyncio.to_thread(self._init_engine)
 
             # 5. 准备字体资源（缺失时从官方源下载并缓存；失败仅告警）
             await self._init_fonts()
@@ -274,6 +283,24 @@ class ArknightsGacha(Star):
                 await self.updater.stop()
             except Exception:
                 pass
+        if self._updater_task and not self._updater_task.done():
+            self._updater_task.cancel()
+            try:
+                await self._updater_task
+            except asyncio.CancelledError:
+                pass
+            except Exception:
+                pass
+        self._updater_task = None
+        if self._recover_task and not self._recover_task.done():
+            self._recover_task.cancel()
+            try:
+                await self._recover_task
+            except asyncio.CancelledError:
+                pass
+            except Exception:
+                pass
+        self._recover_task = None
         self.pools = []
         self.active_pools = []
         self._loaded = False
@@ -298,8 +325,15 @@ class ArknightsGacha(Star):
             )
             self.pools = []
             return
-        with open(path, "r", encoding="utf-8") as f:
-            self.pools = json.load(f)
+        # 读取失败（文件损坏 / 写入被中断）不能向外抛：initialize 的 try 一旦被
+        # 穿透，self._loaded 就永远停在 False，所有指令会一直提示"插件数据未加载"。
+        try:
+            with open(path, "r", encoding="utf-8") as f:
+                self.pools = json.load(f)
+        except (OSError, json.JSONDecodeError) as e:
+            logger.warning(f"[ArkGacha] 卡池数据读取失败（等待重新生成）: {e}")
+            self.pools = []
+            return
         logger.info(f"[ArkGacha] 已加载 {len(self.pools)} 个卡池")
         logger.info(f"[ArkGacha] 已加载 {len(self.pools)} 个卡池数据")
 
@@ -322,10 +356,14 @@ class ArknightsGacha(Star):
         except Exception as e:
             logger.warning(f"[ArkGacha] 重新生成 active_pools 失败: {e}, 尝试读取已有文件")
 
-        # 读取
+        # 读取（同样不能向外抛，否则会穿透 initialize 的 try 使 _loaded 恒为 False）
         if os.path.isfile(active_path):
-            with open(active_path, "r", encoding="utf-8") as f:
-                self.active_pools = json.load(f)
+            try:
+                with open(active_path, "r", encoding="utf-8") as f:
+                    self.active_pools = json.load(f)
+            except (OSError, json.JSONDecodeError) as e:
+                logger.warning(f"[ArkGacha] active_pools.json 损坏，已重置为空: {e}")
+                self.active_pools = []
         else:
             self.active_pools = []
 
@@ -345,21 +383,30 @@ class ArknightsGacha(Star):
             logger.error(f"[ArkGacha] 数据库初始化失败: {e}")
             self.db = None
 
-    def _init_engine(self):
-        """初始化抽卡概率引擎"""
+    def _init_engine(self, allow_generate: bool = True):
+        """初始化抽卡概率引擎
+
+        allow_generate: 数据文件缺失时是否允许在本进程内即时生成。
+                        该生成会【同步】拉起一个子进程（timeout=60），所以只能在
+                        启动 / 数据更新等非交互路径上传 True；
+                        指令路径（_check_loaded）必须传 False —— 否则单个请求就能
+                        把事件循环卡住最长 60 秒。
+        """
         bp_path = os.path.join(composer_config.PROCESSED_DIR, "base_pools.json")
         rules_path = os.path.join(composer_config.PROCESSED_DIR, "pool_rules.json")
 
-        if not os.path.isfile(bp_path) or not os.path.isfile(rules_path):
-            # 尝试自动生成
+        if allow_generate and (not os.path.isfile(bp_path)
+                               or not os.path.isfile(rules_path)):
+            # 尝试自动生成（依赖已拉取的卡池 / 干员数据）
             try:
                 import subprocess, sys
                 gen_path = os.path.join(SCRIPT_DIR, "pool_generator.py")
-                subprocess.run(
+                proc = subprocess.run(
                     [sys.executable, gen_path, "--base-only"],
                     cwd=SCRIPT_DIR, capture_output=True, timeout=60,
                 )
-                logger.info("[ArkGacha] 自动生成 base_pools.json")
+                if proc.returncode == 0:
+                    logger.info("[ArkGacha] 已自动生成 base_pools.json")
             except Exception as e:
                 logger.warning(f"[ArkGacha] 自动生成 base_pools 失败: {e}")
 
@@ -368,8 +415,13 @@ class ArknightsGacha(Star):
             self.engine = GachaEngine(bp_path, rules_path)
             logger.info("[ArkGacha] 抽卡引擎已初始化")
         except Exception as e:
-            logger.error(f"[ArkGacha] 引擎初始化失败: {e}")
+            # 首次运行时数据尚未拉取，走到这里是预期情况：
+            # 自动更新器完成拉取后会通过 on_after_update 回调重新初始化引擎。
             self.engine = None
+            if os.path.isfile(bp_path) and os.path.isfile(rules_path):
+                logger.error(f"[ArkGacha] 引擎初始化失败: {e}")
+            else:
+                logger.info("[ArkGacha] 卡池数据尚未就绪，等待自动更新完成后重建引擎")
 
     async def _init_fonts(self):
         """
@@ -426,13 +478,17 @@ class ArknightsGacha(Star):
             from auto_updater import AutoUpdater
 
             async def on_after_update():
-                """数据更新后的回调：重新加载所有数据"""
+                """数据更新后的回调：重新加载所有数据（放线程，避免阻塞事件循环）"""
                 logger.info("[ArkGacha] 数据已更新，重新加载...")
-                self._load_pool_data()
-                self._load_active_pools()
-                self._init_engine()
-                # 同步刷新渲染器的职业映射（否则新干员的职业图标要等热重载才生效）
-                self._reload_renderer_professions()
+
+                def _reload_all():
+                    self._load_pool_data()
+                    self._load_active_pools()
+                    self._init_engine()
+                    # 同步刷新渲染器的职业映射（否则新干员的职业图标要等热重载才生效）
+                    self._reload_renderer_professions()
+
+                await asyncio.to_thread(_reload_all)
 
             self.updater = AutoUpdater(
                 PLUGIN_DIR,
@@ -442,7 +498,8 @@ class ArknightsGacha(Star):
             # 在事件循环中启动
             try:
                 loop = asyncio.get_running_loop()
-                loop.create_task(self.updater.start())
+                # 持有引用，避免任务在 await（网络请求）期间被垃圾回收
+                self._updater_task = loop.create_task(self.updater.start())
                 logger.info("[ArkGacha] 自动更新器已启动")
             except RuntimeError:
                 logger.warning("[ArkGacha] 无运行中的事件循环，跳过自动更新启动")
@@ -680,19 +737,117 @@ class ArknightsGacha(Star):
                 self._load_active_pools()
             except Exception as e:
                 logger.warning(f"[ArkGacha] 刷新 active_pools 失败: {e}")
+
+        # 剔除已结束的卡池（active_pools 不会随时间自动刷新，见方法内说明）
+        try:
+            self._prune_expired_active_pools()
+        except Exception as e:
+            logger.warning(f"[ArkGacha] 卡池时效校验失败: {e}")
+
         if not self.engine:
             try:
-                self._init_engine()
+                # 指令路径不做【同步】即时生成（会拉起子进程阻塞最长 60s），
+                # 只尝试加载现有文件；缺失则走下面的后台恢复。
+                self._init_engine(allow_generate=False)
             except Exception as e:
                 logger.warning(f"[ArkGacha] 刷新抽卡引擎失败: {e}")
 
+        # 数据尚未就绪（首次安装 / 数据未生成）→ 主动在后台补齐，而不是让用户干等
+        pools_file = os.path.join(composer_config.PROCESSED_DIR,
+                                  "cleaned_pools_final.json")
+        data_missing = not os.path.isfile(pools_file)
+        if data_missing or not self.active_pools or not self.engine:
+            self._schedule_data_recovery()
+
         if not self.active_pools:
+            if data_missing:
+                return "卡池数据尚未就绪，已在后台开始拉取，请稍等片刻后再试。"
             return "当前没有进行中的卡池，无法抽卡。"
         if not self.engine:
-            return "抽卡引擎未就绪。"
+            return "抽卡引擎数据正在后台生成，请稍等片刻后再试。"
         if not self.db:
             return "数据库未就绪。"
         return None
+
+    def _schedule_data_recovery(self) -> None:
+        """数据缺失时在后台触发一次恢复（本地重建 → 必要时联网拉取）。
+
+        由 _check_loaded 在发现"卡池数据 / 抽卡引擎未就绪"时调用，
+        目的是主动把数据补齐，而不是让用户干等或反复重试。
+
+        不阻塞当前请求；同一时刻只允许一个恢复任务在跑
+        （自带去重，多个用户同时触发也只会跑一次）。
+        """
+        if self._recover_task and not self._recover_task.done():
+            return                              # 已有恢复任务在进行中
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            return                              # 无运行中的事件循环（不应发生）
+
+        async def _recover():
+            try:
+                # 1. 用本地数据重建引擎产物（纯本地解析；放线程避免阻塞事件循环）
+                await asyncio.to_thread(self._init_engine)
+                # 2. 本地连卡池原始数据都没有 → 才去联网拉取
+                pools_file = os.path.join(composer_config.PROCESSED_DIR,
+                                          "cleaned_pools_final.json")
+                if not os.path.isfile(pools_file) and self.updater is not None:
+                    logger.info("[ArkGacha] 本地卡池数据缺失，主动触发一次拉取...")
+                    await self.updater.check_and_update()
+            except Exception as e:
+                logger.warning(f"[ArkGacha] 后台数据恢复失败: {e}")
+
+        try:
+            self._recover_task = loop.create_task(_recover())
+            logger.info("[ArkGacha] 已在后台触发数据恢复")
+        except Exception as e:
+            logger.warning(f"[ArkGacha] 触发数据恢复失败: {e}")
+
+    def _prune_expired_active_pools(self) -> None:
+        """剔除内存中已经结束的卡池。
+
+        active_pools 是"生成那一刻"的时间切片，此后不随时间的推移自动刷新；
+        而【旧池结束】不会触发数据更新（PRTS 与本地文件会同时把它排除，
+        被判定为"一致"），于是它会一直留在内存里 —— 已结束的卡池仍可被抽到。
+        这里在使用前按 time_end 主动剔除。
+
+        仅当确有卡池过期时才重排编号（保持 1~N 连续），避免频繁变动用户
+        已经记住的卡池编号。
+        """
+        if not self.active_pools:
+            return
+
+        now = datetime.now(CST)
+        kept, expired = [], 0
+        for p in self.active_pools:
+            try:
+                end = datetime.strptime(
+                    str(p.get("time_end", "")).strip(), "%Y-%m-%d %H:%M"
+                ).replace(tzinfo=CST)
+            except (ValueError, TypeError):
+                kept.append(p)   # 时间无法解析时保留，避免误剔除
+                continue
+            if now > end:
+                expired += 1
+                continue
+            kept.append(p)
+
+        if not expired:
+            return
+
+        for idx, p in enumerate(kept, start=1):
+            p["active_id"] = idx
+        self.active_pools = kept
+        logger.info(
+            f"[ArkGacha] 已剔除 {expired} 个已结束的卡池，剩余 {len(kept)} 个")
+
+        if not kept:
+            # 本地数据里可能已有新池，重新筛选一次
+            try:
+                self._load_active_pools()
+            except Exception as e:
+                logger.warning(f"[ArkGacha] 重新生成 active_pools 失败: {e}")
 
     def _find_active_pool(self, pool_num: int) -> Optional[Dict]:
         """从 active_pools 中按编号查找卡池"""
@@ -789,11 +944,14 @@ class ArknightsGacha(Star):
         ops_5 = [o["name"] for o in pool.get("operators_5", [])]
         pool_type = pool["pool_type_id"]
 
+        # 已持有干员名列表（供 ATTAIN / CLASSIC_ATTAIN 的"首次6★必定未持有"保护使用）
+        owned = [c["char_name"] for c in self.db.get_user_characters(user_id)]
+
         # 抽卡
         result, new_i, new_j = self.engine.single_pull(
             pool_type, ops_6, ops_5, i, j,
             select_rules=pool.get("select_rules"),
-            owned_characters=None,
+            owned_characters=owned,
         )
 
         # 首发十连五星保底: 累计第10抽 且 前10抽从未出≥5★ 且 本抽<5★ → 强制替换为5★
@@ -801,7 +959,7 @@ class ArknightsGacha(Star):
             result, new_i, new_j = self.engine.single_pull(
                 pool_type, ops_6, ops_5, i, j,
                 select_rules=pool.get("select_rules"),
-                owned_characters=None,
+                owned_characters=owned,
                 force_rarity=5,
             )
 
@@ -880,10 +1038,14 @@ class ArknightsGacha(Star):
         # 首发保底状态: (累计抽数, 是否已出过≥5★)
         first_start, first_seen = self.db.get_first_ten_state(user_id, pool["active_id"])
 
+        # 已持有干员名列表（供 ATTAIN / CLASSIC_ATTAIN 的"首次6★必定未持有"保护使用）
+        owned = [c["char_name"] for c in self.db.get_user_characters(user_id)]
+
         # 十连 (引擎内处理首发十连五星保底: 全局第10抽若<5★则强制替换为5★)
         results, new_i, new_j = self.engine.ten_pull(
             pool_type, ops_6, ops_5, i, j,
             select_rules=pool.get("select_rules"),
+            owned_characters=owned,
             first_ten_start=first_start,
             first_ten_seen=first_seen,
         )

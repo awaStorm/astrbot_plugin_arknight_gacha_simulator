@@ -153,7 +153,11 @@ class ImageRenderer:
     def _get_composer(self) -> Composer:
         """懒加载并返回合成器"""
         if self._composer is None:
-            self._composer = Composer()
+            # 必须把【当前画质档位目录】注入合成器：立绘实际写在
+            # elite1_art/<档位>/ 下，而合成器默认只会在 elite1_art/ 根目录找，
+            # 不注入的话单抽图会静默地没有人物立绘。
+            self._composer = Composer(
+                elite1_art_dir=self._elite1_art_quality_dir())
             # 同步职业映射到本类，供下载逻辑使用
             self.profession_map = dict(getattr(self._composer, "_professions_map", {}))
             self._professions_mtime = self._raw_mtime()
@@ -467,14 +471,20 @@ class ImageRenderer:
 
         # 合成十连图（完整复用 Generator_test 逻辑）
         composer = self._get_composer()
-        final = composer.compose_ten_pull(results)
 
         # 保存：转 RGB 丢弃 alpha，确保输出完全不透明
         ts = int(time.time() * 1000)
         safe_name = pool_name.replace("/", "_").replace("\\", "_")[:30] if pool_name else "draw"
         filename = f"tenpull_{safe_name}_{ts}.png"
         out_path = os.path.join(self.output_dir, filename)
-        final.convert("RGB").save(out_path, "PNG")
+
+        def _compose_and_save():
+            final = composer.compose_ten_pull(results)
+            final.convert("RGB").save(out_path, "PNG")
+
+        # 合成是纯 CPU 的同步操作（十连约 0.8s 起），必须丢到线程里跑，
+        # 否则会阻塞 AstrBot 的事件循环，所有用户与其它插件一起卡住。
+        await asyncio.to_thread(_compose_and_save)
         return out_path
 
     async def render_single_pull(
@@ -509,14 +519,20 @@ class ImageRenderer:
 
         # 用合成器生成单抽图（元素表驱动）
         composer = self._get_composer()
-        canvas = composer.compose_single_pull_v3(result, is_new=is_new)
-        if canvas is None:
-            return None
 
         # 保存：转 RGB 丢弃 alpha，确保输出完全不透明
         ts = int(time.time() * 1000)
         safe_name = pool_name.replace("/", "_").replace("\\", "_")[:30] if pool_name else "draw"
         filename = f"single_{safe_name}_{ts}.png"
         out_path = os.path.join(self.output_dir, filename)
-        canvas.convert("RGB").save(out_path, "PNG")
+
+        def _compose_and_save():
+            canvas = composer.compose_single_pull_v3(result, is_new=is_new)
+            if canvas is not None:
+                canvas.convert("RGB").save(out_path, "PNG")
+            return canvas is not None
+
+        # 同上：同步 CPU 合成放到线程，避免阻塞事件循环
+        if not await asyncio.to_thread(_compose_and_save):
+            return None
         return out_path

@@ -17,6 +17,9 @@ import sys
 from PIL import Image
 
 # 画布尺寸与 image_renderer 保持一致（源素材裁剪后为 1024x576）
+# ⚠️ 这两个值与 composer_config 中的同名常量是【各自独立的一份】，改动时
+#    必须两处同步，否则背景裁剪与最终画布会静默错位
+#    （同类的"重复常量漂移"曾在缓存目录常量上真实发生过一次）。
 CANVAS_WIDTH = 1024
 CANVAS_HEIGHT = 576
 
@@ -24,6 +27,7 @@ PLUGIN_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 MATERIAL_DIR = os.path.join(PLUGIN_DIR, "gacha_primary_material")
 
 # POT 纹理裁剪常量：源素材 1024x1024，有效区域为中间 1024x576
+# ⚠️ 同上：composer_config 里也有一份同名常量，改动需同步。
 SRC_POT_SIZE = 1024
 SRC_EFFECTIVE_HEIGHT = 576
 

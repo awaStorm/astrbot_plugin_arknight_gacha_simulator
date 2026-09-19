@@ -22,6 +22,7 @@ import composer_config as cfg  # noqa: E402
 
 PRTS_API = "https://prts.wiki/api.php"
 OUTPUT = os.path.join(cfg.RAW_DIR, "characters_raw.json")
+cfg.ensure_data_dirs()   # 确保输出目录存在（否则写入会因 [Errno 2] 失败）
 
 # MediaWiki cargoquery 单次请求上限
 PAGE_SIZE = 500

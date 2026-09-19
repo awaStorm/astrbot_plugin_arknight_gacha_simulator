@@ -231,6 +231,11 @@ output_test.png
 # Local preview / test render output (由 tools/test_single_pull.py 等生成)
 _tmp_out/
 
+# 字体不随插件包分发（见 THIRD_PARTY_NOTICES.md）：由首次运行时从官方仓库下载。
+# assets/fonts/ 仅用于使用者手动放置【可选兜底字体】，这些大文件无需提交。
+assets/fonts/*.ttf
+assets/fonts/*.otf
+
 # Dev / test-only directories (image-composition reference & test assets)
 Generator_test/
 resource_test/

@@ -509,6 +509,7 @@ class ArknightsGacha(Star):
         except Exception as e:
             logger.warning(f"[ArkGacha] 自动更新器启动失败: {e}")
 
+
     # ──────────────────── 通用校验 ────────────────────
 
     @staticmethod
@@ -867,7 +868,8 @@ class ArknightsGacha(Star):
             "[明日方舟抽卡模拟器]\n"
             "━━━━━━━━━━━━━━\n"
             "/抽卡帮助          显示本帮助\n"
-            "/抽卡签到          每日签到，领取 10 次抽卡机会\n"
+            # "/抽卡签到          每日签到，领取 10 次抽卡机会\n"  # 旧文案：写死 10 次
+            f"/抽卡签到          每日签到，领取 {self._sign_in_amount()} 次抽卡机会\n"
             "/单抽 <池编号>     在指定卡池进行一次单抽\n"
             "/十连 <池编号>     在指定卡池进行一次十连抽卡\n"
             "/卡池查询          查看当前进行中的卡池\n"
@@ -876,24 +878,49 @@ class ArknightsGacha(Star):
             "/潜能仓库 <星级> <页码>  翻页查看\n"
         )
 
+    # ──────────────────── 配置读取 ────────────────────
+
+    def _sign_in_amount(self) -> int:
+        """每日签到赠送的抽卡次数。
+
+        读取 AstrBot 插件配置 sign_in_amount（见 _conf_schema.json）。
+        框架会把 WebUI 里保存的配置注入 self.config（AstrBotConfig
+        为 dict 子类）；显式传入 config=None 时 self.config 为 {}，
+        此时回退到默认值 10。任何取值异常 / 非正数同样回退到 10，
+        保证签到功能始终可用。
+        """
+        default = 10
+        try:
+            amount = int(self.config.get("sign_in_amount", default)) if self.config else default
+        except (TypeError, ValueError):
+            amount = default
+        amount = max(0, min(amount, 999))
+        return amount
+
+
     # ════════════════════════════════════════════════
     #  ========== 新指令: 抽卡签到 ==========
     # ════════════════════════════════════════════════
 
     @filter.command("抽卡签到")
     async def cmd_sign_in(self, event: AstrMessageEvent):
-        """每日签到，领取 10 次抽卡机会"""
+        # """每日签到，领取 10 次抽卡机会"""  # 旧说明：写死 10 次
+        """每日签到，领取签到配置指定的抽卡机会"""
         if not self.db:
             yield event.plain_result("[抽卡签到] 数据库未就绪，请联系管理员。")
             return
 
         user_id = event.get_sender_id()
 
-        ok, remaining = self.db.do_sign_in(user_id, amount=10)
+        # 签到赠送次数改为读取插件配置 sign_in_amount（见 _conf_schema.json）
+        amount = self._sign_in_amount()
+        # ok, remaining = self.db.do_sign_in(user_id, amount=10)  # 旧代码：写死 10 次
+        ok, remaining = self.db.do_sign_in(user_id, amount=amount)
 
         if ok:
             yield event.plain_result(
-                f"[抽卡签到] 签到成功! +10 次抽卡机会\n"
+                # f"[抽卡签到] 签到成功! +10 次抽卡机会\n"  # 旧文案：写死 10
+                f"[抽卡签到] 签到成功! +{amount} 次抽卡机会\n"
                 f"当前剩余抽卡次数: {remaining}"
             )
         else:
@@ -931,8 +958,10 @@ class ArknightsGacha(Star):
         # 检查次数
         if self.db.get_draw_count(user_id) <= 0:
             yield event.plain_result(
+                # "抽卡次数不足！\n"  # 旧文案：写死 10
+                # "请使用 /抽卡签到 领取每日 10 次抽卡机会。"
                 "抽卡次数不足！\n"
-                "请使用 /抽卡签到 领取每日 10 次抽卡机会。"
+                f"请使用 /抽卡签到 领取每日 {self._sign_in_amount()} 次抽卡机会。"
             )
             return
 
@@ -1024,7 +1053,8 @@ class ArknightsGacha(Star):
         if self.db.get_draw_count(user_id) < 10:
             yield event.plain_result(
                 f"抽卡次数不足！需要 10 次，当前剩余 {self.db.get_draw_count(user_id)} 次。\n"
-                "请使用 /抽卡签到 领取每日 10 次抽卡机会。"
+                # "请使用 /抽卡签到 领取每日 10 次抽卡机会。"  # 旧文案：写死 10
+                f"请使用 /抽卡签到 领取每日 {self._sign_in_amount()} 次抽卡机会。"
             )
             return
 

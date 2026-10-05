@@ -15,7 +15,7 @@
     "type": "int",
     "description": "每日签到赠送的抽卡次数",
     "default": 10,
-    "hint": "每日 /抽卡签到 可领取的抽卡机会次数"
+    "hint": "每日 /抽卡签到 可领取的抽卡机会次数，支持范围为0～999"
   },
   "portrait_cache_quality": {
     "type": "string",

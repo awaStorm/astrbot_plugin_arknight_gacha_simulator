@@ -5,6 +5,7 @@ astrbot_plugin_arknight_gacha_simulator
 
 import json
 import os
+import re
 import sys
 import hashlib
 import asyncio
@@ -13,8 +14,10 @@ from typing import Dict, List, Optional
 from urllib.parse import quote
 
 from astrbot.api.event import filter, AstrMessageEvent
+from astrbot.api.message_components import At
 from astrbot.api.star import Context, Star, StarTools
 from astrbot.api import AstrBotConfig, logger
+from astrbot.core.star.filter.command import GreedyStr
 
 # 插件唯一标识：用于向框架申请专属数据目录 data/plugin_data/<PLUGIN_NAME>/
 PLUGIN_NAME = "astrbot_plugin_arknight_gacha_simulator"
@@ -56,6 +59,9 @@ CACHE_TTL_DAYS = 30
 POOL_CACHE_FILE = os.path.join(PLUGIN_DIR, "data", "cache", "pool_images.json")
 # 卡池封面图本地存储目录：首次拉取后直接发本地文件，不再把 URL 交给下游加载
 POOL_COVER_DIR = os.path.join(PLUGIN_DIR, "data", "cache", "pool_covers")
+
+# 消息文本中的提及标记
+MENTION_ID_RE = re.compile(r"<@!?([^>]+)>")
 
 # ──────────────────── 辅助函数 ────────────────────
 
@@ -1425,6 +1431,125 @@ class ArknightsGacha(Star):
             yield event.make_result().message("\n".join(lines)).file_image(image_path)
         else:
             yield event.plain_result("\n".join(lines))
+
+    # ════════════════════════════════════════════════
+    #  ========== 管理员: 抽数修改 ==========
+    # ════════════════════════════════════════════════
+
+    @filter.permission_type(filter.PermissionType.ADMIN)
+    @filter.command("抽数修改")
+    async def cmd_modify_draws(self, event: AstrMessageEvent, args: GreedyStr) -> None:
+        """管理员: 修改指定用户的抽卡次数。
+
+        用法: /抽数修改 <数量> [@用户]
+        """
+        if not self.db:
+            yield event.plain_result("[抽数修改] 数据库未就绪。")
+            return
+        user_id, delta = self._parse_modify_args(
+            event, str(args or ""), "抽数修改", str(event.get_sender_id() or "")
+        )
+        if user_id is None or delta is None:
+            yield event.plain_result(
+                "[抽数修改] 无法解析数量或目标用户。"
+                "用法: /抽数修改 <数量> [@用户]"
+            )
+            return
+        remaining = self.db.adjust_draw_count(user_id, delta)
+        yield event.plain_result(
+            f"[抽数修改] 用户 {user_id} 抽卡次数 {delta:+d} → 当前 {remaining}"
+        )
+
+    def _parse_modify_args(
+        self,
+        event: AstrMessageEvent,
+        args: str,
+        command: str,
+        default_id: str,
+    ) -> tuple[str | None, int | None]:
+        """解析修改命令的数量与目标用户。"""
+        tokens = [t for t in str(args or "").split() if t]
+        if not tokens or not self._is_delta_token(tokens[0]):
+            return None, None
+        delta = int(tokens[0])
+        user_id = self._mention_user_id(event, command)
+        if not user_id:
+            for token in tokens[1:]:
+                m = MENTION_ID_RE.search(token)
+                if not m:
+                    m = re.search(r"\(([^)]+)\)$", token)
+                candidate = m.group(1) if m else token
+                if self._is_valid_user_id(candidate):
+                    user_id = candidate
+                    break
+            if user_id is None:
+                user_id = default_id
+                if not self._is_valid_user_id(user_id):
+                    return None, None
+        return user_id, delta
+
+    def _mention_user_id(self, event: AstrMessageEvent, command: str) -> str | None:
+        """从事件中解析被提及用户的 ID，无提及则返回 None。"""
+        self_id = str(event.get_self_id() or "")
+
+        def _usable(mention_id: str) -> bool:
+            return (
+                bool(mention_id)
+                and mention_id != "all"
+                and mention_id != self_id
+                and mention_id != "qq_official"
+            )
+
+        for comp in event.get_messages():
+            if isinstance(comp, At):
+                qq = str(getattr(comp, "qq", "") or "").strip()
+                if _usable(qq):
+                    return qq
+        texts = []
+        for comp in event.get_messages():
+            text = str(getattr(comp, "text", "") or "")
+            if text:
+                texts.append(text)
+        texts.append(str(getattr(event, "message_str", "") or ""))
+        raw = getattr(getattr(event, "message_obj", None), "raw_message", None)
+        if raw is not None:
+            texts.append(str(getattr(raw, "content", "") or ""))
+        for text in texts:
+            if not text:
+                continue
+            idx = text.find(command)
+            if idx >= 0:
+                for m in MENTION_ID_RE.finditer(text[idx + len(command) :]):
+                    if _usable(m.group(1)):
+                        return m.group(1)
+                continue
+            matches = [m for m in MENTION_ID_RE.findall(text) if _usable(m)]
+            if matches:
+                return matches[-1]
+        if raw is not None:
+            for m in reversed(getattr(raw, "mentions", None) or []):
+                mid = str(
+                    getattr(m, "member_openid", None) or getattr(m, "id", None) or ""
+                ).strip()
+                if _usable(mid):
+                    return mid
+        return None
+
+    @staticmethod
+    def _is_valid_user_id(value: str) -> bool:
+        """判断 value 是否为合法的用户 ID。
+
+        因为不同平台的 ID 格式不同，因此这里只拒绝空值与占位符（all、qq_official）。
+        """
+        value = value.strip()
+        return bool(value) and value not in {"all", "qq_official"}
+
+    @staticmethod
+    def _is_delta_token(token: str) -> bool:
+        t = token.strip()
+        if t.startswith(("+", "-")):
+            t = t[1:]
+        return t.isdigit()
 
     # ════════════════════════════════════════════════
     #  ========== 旧指令: /gacha 系列 (已移除) ==========

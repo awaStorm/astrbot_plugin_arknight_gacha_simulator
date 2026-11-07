@@ -168,6 +168,28 @@ class DBManager:
             conn.commit()
             return True
 
+    def adjust_draw_count(self, user_id: str, delta: int) -> int:
+        """按增量修改用户抽卡次数，保证修改后抽数不小于 0。
+
+        返回修改后的剩余抽卡次数。
+        """
+        delta = int(delta)
+        with self._get_conn() as conn:
+            now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+            conn.execute(
+                "INSERT OR IGNORE INTO users (user_id, created_at) VALUES (?, ?)",
+                (user_id, now),
+            )
+            conn.execute(
+                "UPDATE users SET draw_count = MAX(0, draw_count + ?) WHERE user_id = ?",
+                (delta, user_id),
+            )
+            conn.commit()
+            row = conn.execute(
+                "SELECT draw_count FROM users WHERE user_id = ?", (user_id,)
+            ).fetchone()
+            return int(row["draw_count"]) if row else 0
+
     # ──────────────────── 签到 ────────────────────
 
     def check_sign_in(self, user_id: str) -> bool:

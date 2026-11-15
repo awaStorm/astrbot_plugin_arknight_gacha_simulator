@@ -1433,31 +1433,31 @@ class ArknightsGacha(Star):
             yield event.plain_result("\n".join(lines))
 
     # ════════════════════════════════════════════════
-    #  ========== 管理员: 抽数修改 ==========
+    #  ========== 管理员: 抽数增减 ==========
     # ════════════════════════════════════════════════
 
     @filter.permission_type(filter.PermissionType.ADMIN)
-    @filter.command("抽数修改")
+    @filter.command("抽数增减")
     async def cmd_modify_draws(self, event: AstrMessageEvent, args: GreedyStr) -> None:
-        """管理员: 修改指定用户的抽卡次数。
+        """管理员: 按增量增减指定用户的抽卡次数，未指定用户时默认操作发送者本人。
 
-        用法: /抽数修改 <数量> [@用户]
+        用法: /抽数增减 <±数量> [@用户]，例如 /抽数增减 +100、/抽数增减 -50 @某人
         """
         if not self.db:
-            yield event.plain_result("[抽数修改] 数据库未就绪。")
+            yield event.plain_result("[抽数增减] 数据库未就绪。")
             return
         user_id, delta = self._parse_modify_args(
-            event, str(args or ""), "抽数修改", str(event.get_sender_id() or "")
+            event, str(args or ""), "抽数增减", str(event.get_sender_id() or "")
         )
         if user_id is None or delta is None:
             yield event.plain_result(
-                "[抽数修改] 无法解析数量或目标用户。"
-                "用法: /抽数修改 <数量> [@用户]"
+                "[抽数增减] 无法解析数量或目标用户。\n"
+                "用法: /抽数增减 <±数量> [@用户]，未指定用户时默认操作自己"
             )
             return
         remaining = self.db.adjust_draw_count(user_id, delta)
         yield event.plain_result(
-            f"[抽数修改] 用户 {user_id} 抽卡次数 {delta:+d} → 当前 {remaining}"
+            f"[抽数增减] 用户 {user_id} 抽卡次数 {delta:+d} → 当前 {remaining}"
         )
 
     def _parse_modify_args(
@@ -1467,7 +1467,7 @@ class ArknightsGacha(Star):
         command: str,
         default_id: str,
     ) -> tuple[str | None, int | None]:
-        """解析修改命令的数量与目标用户。"""
+        """解析增减命令的数量与目标用户。"""
         tokens = [t for t in str(args or "").split() if t]
         if not tokens or not self._is_delta_token(tokens[0]):
             return None, None

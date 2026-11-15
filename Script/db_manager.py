@@ -169,7 +169,7 @@ class DBManager:
             return True
 
     def adjust_draw_count(self, user_id: str, delta: int) -> int:
-        """按增量修改用户抽卡次数，保证修改后抽数不小于 0。
+        """按增量增减用户抽卡次数（delta 可正可负），保证修改后抽数不小于 0。
 
         返回修改后的剩余抽卡次数。
         """
